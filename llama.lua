@@ -1,114 +1,74 @@
 local ffi = require("ffi")
 -- Define sizes manually
-local BYTE = 1
-local FLOAT = 4
-local SHORT = 2
-local INTEGER = 4
-local FLOAT16 = 2 -- Assuming 16-bit half-precision float (2 bytes)
-local GGMLType = {
-	F32 = {enum = 0, typeSize = FLOAT, blockSize = 1},
-	F16 = {enum = 1, typeSize = FLOAT16, blockSize = 1},
-	Q4_0 = {enum = 2, typeSize = FLOAT16 + 16 * BYTE, blockSize = 32},
-	Q4_1 = {enum = 3, typeSize = 2 * FLOAT16 + 16 * BYTE, blockSize = 32},
-	UNSUPPORTED_Q4_2 = {enum = 4, typeSize = INTEGER, blockSize = 1}, -- support removed, handling similarly
-	UNSUPPORTED_Q4_3 = {enum = 5, typeSize = INTEGER, blockSize = 1}, -- support removed, handling similarly
-	Q5_0 = {enum = 6, typeSize = INTEGER, blockSize = 1},
-	Q5_1 = {enum = 7, typeSize = INTEGER, blockSize = 1},
-	Q8_0 = {enum = 8, typeSize = FLOAT16 + 32 * BYTE, blockSize = 32},
-	Q8_1 = {enum = 9, typeSize = 32 * BYTE + 2 * FLOAT, blockSize = 32},
-	Q2_K = {enum = 10, typeSize = INTEGER, blockSize = 1},
-	Q3_K = {enum = 11, typeSize = INTEGER, blockSize = 1},
-	Q4_K = {
-		enum = 12,
-		typeSize = 2 * FLOAT16 + (256 / 16 / 8 * 6) + 256 / 2,
-		blockSize = 256,
-	},
-	Q5_K = {
-		enum = 13,
-		typeSize = 2 * FLOAT16 + (256 / 16 / 8 * 6) + 256 / 8 + 256 / 2,
-		blockSize = 256,
-	},
-	Q6_K = {enum = 14, typeSize = 256 / 2 + 256 / 4 + 256 / 16 + FLOAT16, blockSize = 256},
-	Q8_K = {enum = 15, typeSize = INTEGER, blockSize = 1},
-	I8 = {enum = 16, typeSize = BYTE, blockSize = 1},
-	I16 = {enum = 17, typeSize = SHORT, blockSize = 1},
-	I32 = {enum = 18, typeSize = INTEGER, blockSize = 1},
-}
 
-local function ggml_type_from_enum(i)
-	for k, v in pairs(GGMLType) do
-		if v.enum == i then return v, k end
-	end
-end
+local GGMLType
 
-local function get_tensor_size(type, dimensions_map)
-	local ggml_type = ggml_type_from_enum(type)
-
-	local t = 1
-	
-	for i, v in ipairs(dimensions_map) do
-		t = t * v
-	end
-
-	return t
-end
-
-local function get_tensor_byte_size(type, dimensions_map)
-	local t = get_tensor_size(type, dimensions_map)
-	local ggml_type = ggml_type_from_enum(type)
-
-	t = t * ggml_type.typeSize
-	assert(t % ggml_type.blockSize == 0, "Total size must be a multiple of the block size")
-	t = t / ggml_type.blockSize
-
-	return t
-end
-
-local function rope_freq(context_length, head_size, theta)
-	assert(head_size % 2 == 0)
-	local cr = {}
-	local ci = {}
-	local n = 1
-
-	for pos = 0, context_length - 1 do
-		for i = 0, head_size - 1, 2 do
-			local freq = 1.0 / (theta ^ (i / head_size))
-			local val = pos * freq
-			cr[n] = math.cos(val)
-			ci[n] = math.sin(val)
-			n = n + 1
-		end
-	end
-
-	n = n - 1
-	assert(context_length * (head_size / 2) == n)
-	return cr, ci
-end
-
-
-
-local cache = {}
-local cached_info = function(cdecl)
-	if cache[cdecl] then return cache[cdecl] end
-
-	local typ = ffi.typeof(cdecl)
-	local typ_ptr = ffi.typeof("$*", typ)
-	local size = ffi.sizeof(cdecl)
-	local val = {
-		typ = typ,
-		typ_ptr = typ_ptr,
-		size = size,
+do
+	local BYTE = 1
+	local FLOAT = 4
+	local SHORT = 2
+	local INTEGER = 4
+	local FLOAT16 = 2 -- Assuming 16-bit half-precision float (2 bytes)
+	GGMLType = {
+		{name = "F32", typeSize = FLOAT, blockSize = 1},
+		{name = "F16", typeSize = FLOAT16, blockSize = 1},
+		{name = "Q4_0", typeSize = FLOAT16 + 16 * BYTE, blockSize = 32},
+		{name = "Q4_1", typeSize = 2 * FLOAT16 + 16 * BYTE, blockSize = 32},
+		{name = "UNSUPPORTED_Q4_2", typeSize = INTEGER, blockSize = 1},
+		{name = "UNSUPPORTED_Q4_3", typeSize = INTEGER, blockSize = 1},
+		{name = "Q5_0", typeSize = INTEGER, blockSize = 1},
+		{name = "Q5_1", typeSize = INTEGER, blockSize = 1},
+		{name = "Q8_0", typeSize = FLOAT16 + 32 * BYTE, blockSize = 32},
+		{name = "Q8_1", typeSize = 32 * BYTE + 2 * FLOAT, blockSize = 32},
+		{name = "Q2_K", typeSize = INTEGER, blockSize = 1},
+		{name = "Q3_K", typeSize = INTEGER, blockSize = 1},
+		{
+			name = "Q4_K",
+			typeSize = 2 * FLOAT16 + (256 / 16 / 8 * 6) + 256 / 2,
+			blockSize = 256,
+		},
+		{
+			name = "Q5_K",
+			typeSize = 2 * FLOAT16 + (256 / 16 / 8 * 6) + 256 / 8 + 256 / 2,
+			blockSize = 256,
+		},
+		{name = "Q6_K", typeSize = 256 / 2 + 256 / 4 + 256 / 16 + FLOAT16, blockSize = 256},
+		{name = "Q8_K", typeSize = INTEGER, blockSize = 1},
+		{name = "I8", typeSize = BYTE, blockSize = 1},
+		{name = "I16", typeSize = SHORT, blockSize = 1},
+		{name = "I32", typeSize = INTEGER, blockSize = 1},
 	}
-	cache[cdecl] = val
-	return val
-end
-local void_ptr = ffi.typeof("void *")
 
-local function read_primitive(file, cdecl)
-	local info = cached_info(cdecl)
-	local str = file:read(info.size)
-	local ptr = ffi.cast(void_ptr, str)
-	return ffi.cast(info.typ_ptr, ptr)[0]
+	for i, v in ipairs(GGMLType) do
+		v.enum = i - 1
+	end
+end
+
+local read_primitive
+do
+	local cache = {}
+	local cached_info = function(cdecl)
+		if cache[cdecl] then return cache[cdecl] end
+
+		local typ = ffi.typeof(cdecl)
+		local typ_ptr = ffi.typeof("$*", typ)
+		local size = ffi.sizeof(cdecl)
+		local val = {
+			typ = typ,
+			typ_ptr = typ_ptr,
+			size = size,
+		}
+		cache[cdecl] = val
+		return val
+	end
+	local void_ptr = ffi.typeof("void *")
+
+	function read_primitive(file, cdecl)
+		local info = cached_info(cdecl)
+		local str = file:read(info.size)
+		local ptr = ffi.cast(void_ptr, str)
+		return ffi.cast(info.typ_ptr, ptr)[0]
+	end
 end
 
 local types = {
@@ -199,12 +159,32 @@ local function load_gguf(path)
 	end
 
 	local tensor_count = reader.UINT64(file)
-	local metadata = {}
 
+	local metadata = {}
 	for i = 1, tonumber(reader.UINT64(file)) do
 		local key = reader.STRING(file)
 		local val = read_value(file, reader.UINT32(file))
 		metadata[key] = val
+	end
+
+
+	local function get_tensor_size(dimensions_map)
+		local t = 1
+		
+		for i, v in ipairs(dimensions_map) do
+			t = t * v
+		end
+	
+		return t
+	end
+	
+	local function get_tensor_byte_size(type_info, dimensions_map)
+		local t = get_tensor_size(dimensions_map)
+		t = t * type_info.typeSize
+		assert(t % type_info.blockSize == 0, "Total size must be a multiple of the block size")
+		t = t / type_info.blockSize
+	
+		return t
 	end
 
 	local tensors = {}
@@ -217,14 +197,15 @@ local function load_gguf(path)
 			dimensions_map[i] = reader.UINT64(file)
 		end
 
-		local ggml_type = reader.UINT32(file)
+		local type_info = assert(GGMLType[reader.UINT32(file)+1], "invalid ggml typeid")
 		local offset = reader.UINT64(file)
 
 		tensors[i] = {
 			name = name,
-			byte_size = get_tensor_byte_size(ggml_type, dimensions_map),
-			size = get_tensor_size(ggml_type, dimensions_map),
-			ggml_type = ggml_type,
+			byte_size = get_tensor_byte_size(type_info, dimensions_map),
+			size = get_tensor_size(dimensions_map),
+			ggml_typeid = ggml_typeid,
+			type_info = type_info,
 			offset = offset,
 		}
 	end
@@ -298,7 +279,7 @@ end
 
 
 local gguf = load_gguf(
-	"/home/caps/.ollama/models/blobs/sha256:00e1317cbf74d901080d7100f57580ba8dd8de57203072dc6f668324ba545f29"
+	"/home/caps/projects/llama3.java/Meta-Llama-3-8B-Instruct-Q4_0.gguf"
 )
 
 local tokenizer = Tokenizer(gguf)
@@ -320,6 +301,28 @@ local sharedWeights = false
 local rmsNormEps = gguf.metadata["llama.attention.layer_norm_rms_epsilon"] or 1e-5
 local ropeTheta = gguf.metadata["llama.rope.freq_base"] or 10000
 local headSize = dim / numberOfHeads
+
+
+local function rope_freq(context_length, head_size, theta)
+	assert(head_size % 2 == 0)
+	local cr = {}
+	local ci = {}
+	local n = 1
+
+	for pos = 0, context_length - 1 do
+		for i = 0, head_size - 1, 2 do
+			local freq = 1.0 / (theta ^ (i / head_size))
+			local val = pos * freq
+			cr[n] = math.cos(val)
+			ci[n] = math.sin(val)
+			n = n + 1
+		end
+	end
+
+	n = n - 1
+	assert(context_length * (head_size / 2) == n)
+	return cr, ci
+end
 
 local ropeFreqsReal, ropeFreqsImag = rope_freq(contextLength, headSize, ropeTheta)
 
@@ -441,13 +444,59 @@ end
 
 
 local function loadQuantized(entry)
-	local info, name = ggml_type_from_enum(entry.ggml_type)
-
-	if name == "Q4_0" then
+	if entry.type_info.name == "Q4_0" then
 		return Q4_0FloatTensor(entry.size, entry.blob)
 	else
-		error("unsupported quant format " .. name)
+		error("unsupported quant format " .. entry.type_info.name)
 	end
 end
 
-loadQuantized(gguf.tensors["token_embd.weight"])
+local function toFloatBuffer(entry)
+	if entry.type_info.name == "F32" then
+		return entry.blob -- as float[]
+	else
+		error("unsupported quant format " .. entry.type_info.name)
+	end
+end
+
+local function loadArrayOfFloatBuffer(size, getTensorEntry)
+	local array = {}
+	for i = 1, size do
+		array[i] = toFloatBuffer(getTensorEntry(i-1))
+	end
+	return array
+end
+
+local function loadArrayOfQuantized(size, getTensorEntry)
+	local array = {}
+	for i = 1, size do
+		array[i] = loadQuantized(getTensorEntry(i-1))
+	end
+	return array
+end
+
+
+local function llama_weights(weights)
+
+end
+
+for k,v in pairs(gguf.tensors) do
+	print(k,v)
+end
+
+llama_weights({
+	loadQuantized(gguf.tensors["token_embd.weight"]),
+	loadArrayOfFloatBuffer(numberOfLayers, function(i) return gguf.tensors["blk." .. i .. ".attn_norm.weight"] end),
+	loadArrayOfQuantized(numberOfLayers, function(i) return gguf.tensors["blk." .. i .. ".attn_q.weight"] end),
+	loadArrayOfQuantized(numberOfLayers, function(i) return gguf.tensors["blk." .. i .. ".attn_k.weight"] end),
+	loadArrayOfQuantized(numberOfLayers, function(i) return gguf.tensors["blk." .. i .. ".attn_v.weight"] end),
+	loadArrayOfQuantized(numberOfLayers, function(i) return gguf.tensors["blk." .. i .. ".attn_output.weight"] end),
+	loadArrayOfFloatBuffer(numberOfLayers, function(i) return gguf.tensors["blk." .. i .. ".ffn_norm.weight"] end),
+	loadArrayOfQuantized(numberOfLayers, function(i) return gguf.tensors["blk." .. i .. ".ffn_gate.weight"] end), -- w1
+	loadArrayOfQuantized(numberOfLayers, function(i) return gguf.tensors["blk." .. i .. ".ffn_down.weight"] end), -- w2
+	loadArrayOfQuantized(numberOfLayers, function(i) return gguf.tensors["blk." .. i .. ".ffn_up.weight"] end), -- w
+	toFloatBuffer(gguf.tensors["output_norm.weight"]),
+	ropeFreqsReal,
+	ropeFreqsImag,
+	loadQuantized(gguf.tensors["output.weight"])
+})
