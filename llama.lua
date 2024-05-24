@@ -1,3 +1,14 @@
+local TEST = [[
+John's quick to resp_ond, isn't he? I've seen 123 birds, mostly sparrows, bluebirds, and crows. They're not "typical" birds; these'll fly up to 300 miles in a day! However, I'm not too keen on studying them further. Haven't you heard? It's strange, really.
+
+-- "Yes," she said, "they've adapted well to urban life."
+
+No doubt, innovations in city planning—especially those focused on sustainability—will need to account for such wildlife. Urban environments, you know? They're teeming with life; not just birds, but also small mammals, insects, and plants. Oh, and remember, they'll need 'water sources' too. 
+
+Can't forget about the $%&* symbols in texts, right? Or punctuation!!! These elements can add "flavor" to any written piece.
+
+So, what'll it be? More studies or just admiring from afar?	
+]]
 local ffi = require("ffi")
 -- Define sizes manually
 local GGMLType = (
@@ -261,13 +272,14 @@ local function Tokenizer(gguf)
 			size = function()
 				return #tokens
 			end,
+			token_map = tokens_map,
+			tokens = tokens,
 		}
 	end
 
 	local vocabulary = Vocabulary(gguf)
-	local merges = {}
-
-	do
+	local merges = {} -- passed to tokenizer
+	do -- merge lines
 		for k, v in ipairs(gguf.metadata["tokenizer.ggml.merges"]) do
 			local l, r = v:match("(%S+) (%S+)")
 			table.insert(merges, {vocabulary.getIndex(l), vocabulary.getIndex(r)})
@@ -293,10 +305,237 @@ local function Tokenizer(gguf)
 	-- actual tokenizer here
 	local merges2 = {}
 
-	for i, v in ipairs(merges) do
-		merges2[i] = vocabulary.getIndex(vocabulary.get(v[1]) .. vocabulary.get(v[2]))
+	for _, pair in ipairs(merges) do
+		merges2[pair[1] .. "|" .. pair[2]] = vocabulary.getIndex(vocabulary.get(pair[1]) .. vocabulary.get(pair[2]))
 	end
 
+	local function utf8_uint32(char, offset)
+		if char == "" then return -1 end
+
+		offset = offset or 1
+		local byte = char:byte(offset)
+
+		if byte and byte >= 128 then
+			if byte >= 240 then
+				if #char < 4 then return -1 end
+
+				byte = (byte % 8) * 262144
+				byte = byte + (char:byte(offset + 1) % 64) * 4096
+				byte = byte + (char:byte(offset + 2) % 64) * 64
+				byte = byte + (char:byte(offset + 3) % 64)
+			elseif byte >= 224 then
+				if #char < 3 then return -1 end
+
+				byte = (byte % 16) * 4096
+				byte = byte + (char:byte(offset + 1) % 64) * 64
+				byte = byte + (char:byte(offset + 2) % 64)
+			elseif byte >= 192 then
+				if #char < 2 then return -1 end
+
+				byte = (byte % 32) * 64
+				byte = byte + (char:byte(offset + 1) % 64)
+			else
+				byte = -1
+			end
+		end
+
+		return byte
+	end
+
+	function bytesToUnicode()
+		local function table_contains(tbl, item)
+			for _, value in pairs(tbl) do
+				if value == item then return true end
+			end
+
+			return false
+		end
+
+		local bs = {}
+
+		for i = utf8_uint32("!"), utf8_uint32("~") do
+			table.insert(bs, i)
+		end
+
+		for i = utf8_uint32("¡"), utf8_uint32("¬") do
+			table.insert(bs, i)
+		end
+
+		for i = utf8_uint32("®"), utf8_uint32("ÿ") do
+			table.insert(bs, i)
+		end
+
+		local cs = {}
+
+		for _, v in ipairs(bs) do
+			table.insert(cs, v)
+		end
+
+		local n = 0
+
+		for b = 0, 255 do
+			if not table_contains(bs, b) then
+				table.insert(bs, b)
+				table.insert(cs, 256 + n)
+				n = n + 1
+			end
+		end
+
+		local result = {}
+
+		for i = 1, #bs do
+			result[bs[i]] = cs[i]
+		end
+
+		return result
+	end
+
+	local BYTESMAP = bytesToUnicode()
+
+	local function encode(str)
+		local function encode(str, special)
+			if not special then encode_ordinary(str) end
+
+			for k, v in pairs(special) do
+				assert(specialTokens[k])
+			end
+
+			local specialPattern = {}
+
+			for k, v in pairs(special) do
+				table.insert(specialPattern, "\"" .. specialPattern .. "\"")
+			end
+
+			specialPattern = "(" .. table.concat(specialPattern, "|") .. ")"
+		end
+
+		local function get_stats(ids)
+			local map = {}
+
+			for i = 1, #ids - 1 do
+				local key = ids[i + 0] .. "|" .. ids[i + 1]
+				map[key] = (map[key] or 0) + 1
+			end
+
+			return map
+		end
+
+		local function merge(ids, pair, idx)
+			local newIds = {}
+			local i = 1
+
+			while i <= #ids do
+				if pair == (ids[i] .. "|" .. (ids[i + 1] or "-")) then
+					table.insert(newIds, idx)
+					i = i + 2
+				else
+					table.insert(newIds, ids[i])
+					i = i + 1
+				end
+			end
+
+			return newIds
+		end
+
+		local function utf8_encode(cp)
+			if cp < 0x80 then
+				return string.char(cp)
+			elseif cp < 0x800 then
+				return string.char(0xC0 + math.floor(cp / 0x40), 0x80 + (cp % 0x40))
+			elseif cp < 0x10000 then
+				return string.char(
+					0xE0 + math.floor(cp / 0x1000),
+					0x80 + (math.floor(cp / 0x40) % 0x40),
+					0x80 + (cp % 0x40)
+				)
+			elseif cp < 0x200000 then
+				return string.char(
+					0xF0 + math.floor(cp / 0x40000),
+					0x80 + (math.floor(cp / 0x1000) % 0x40),
+					0x80 + (math.floor(cp / 0x40) % 0x40),
+					0x80 + (cp % 0x40)
+				)
+			end
+		end
+
+		local function MERGE(str)
+			local ids = {}
+
+			for i = 1, #str do
+				local b = utf8_uint32(str, i)
+
+				if b ~= -1 then -- TODO, get length of utf8 string
+					local index = vocabulary.getIndex(utf8_encode(b))
+					table.insert(ids, index)
+				end
+			end
+
+			while #ids > 2 do
+				local stats = get_stats(ids)
+				local minPair
+				local minIndex = math.huge
+
+				for pair, index in pairs(stats) do
+					local mergeIndex = merges2[pair] or math.huge
+
+					if mergeIndex < minIndex then
+						minIndex = mergeIndex
+						minPair = pair
+					end
+				end
+
+				if not merges2[minPair] then
+					break -- Nothing else can be merged anymore
+				end
+
+				local idx = merges2[minPair]
+				ids = merge(ids, minPair, idx)
+			end
+
+			return ids
+		end
+
+		local new = {}
+
+		for i = 1, #str do
+			local test = str:byte(i)
+			local int = BYTESMAP[test]
+			table.insert(new, utf8_encode(int))
+		end
+
+		new = table.concat(new)
+
+		local tokens = {}
+
+		for i,v in ipairs(MERGE(new)) do
+			tokens[i] = v
+		end
+
+		return tokens
+	end
+
+	do
+		local tks = encode("hello world")
+		assert(#tks == 2)
+		assert(tks[1] == 15340)
+		assert(tks[2] == 1918)
+	end
+
+	do
+		local tks =encode[[John's quick to respond, isn't he? I've seen 123 birds, mostly sparrows, bluebirds, and crows. They're not "typical" birds; these'll fly up to 300 miles in a day! However, I'm not too keen on studying them further. Haven't you heard? It's strange, really.
+
+-- "Yes," she said, "they've adapted well to urban life."
+
+No doubt, innovations in city planning—especially those focused on sustainability—will need to account for such wildlife. Urban environments, you know? They're teeming with life; not just birds, but also small mammals, insects, and plants. Oh, and remember, they'll need 'water sources' too. 
+
+Can't forget about the $%&* symbols in texts, right? Or punctuation!!! These elements can add "flavor" to any written piece.
+
+So, what'll it be? More studies or just admiring from afar?]]
+	
+		for k,v in pairs(tks) do
+			print(k,v)
+		end
+	end
 	return {
 		vocabulary = vocabulary,
 		merges = merges,
@@ -398,13 +637,13 @@ local function Q4_0FloatTensor(size, blob)
 	return self
 end
 
-local function FloatTensor(size, blob)
+local function F32FloatTensor(size, blob)
 	local self = {}
 	self.size = size
 	self.type = GGMLType.Q4_0
 
 	function self:SetFloat(index, value)
-		error("NYI")
+		blob[index] = value
 	end
 
 	function self:GetFloatVector(index, value)
@@ -412,23 +651,7 @@ local function FloatTensor(size, blob)
 	end
 
 	function self:GetFloat(index)
-		local block_index = index / self.type.blockSize
-		local block_offset = block_index * self.type.typeSize
-		local scale = blob[index] -- read uint16_t
-		local quant
-		local modIndex = index % self.type.blockSize
-
-		if modIndex < self.type.blockSize / 2 then
-			quant = bit.band(blob[block_offset + FLOAT16 + modIndex], 0x0F)
-		else
-			quant = bit.band(
-				bit.rshift(blob[block_offset + FLOAT16 + modIndex - self.type.blockSize / 2], 4),
-				0x0F
-			)
-		end
-
-		quant = quant - 8
-		return quant * scale
+		return blob[index]
 	end
 
 	function self.ScalarDot(self, thisOffset, that, thatOffset, size)
