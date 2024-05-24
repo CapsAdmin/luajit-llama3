@@ -231,12 +231,12 @@ local function load_gguf(path)
 	local padding = alignment - (file:seek() % alignment)
 	file:seek("set", file:seek() + padding)
 	local tensor_data_offset = file:seek()
-	local tensor_data = file:read()
 
+	--local tensor_data = file:read()
 	for i, tensor in ipairs(tensors) do
 		file:seek("set", tonumber(tensor.offset))
-		local tensor_blob = file:read(tonumber(tensor.byte_size))
-		tensor.blob = tensor_blob
+	--local tensor_blob = file:read(tonumber(tensor.byte_size))
+	--tensor.blob = tensor_blob
 	end
 
 	local tensor_map = {}
@@ -301,7 +301,6 @@ local function Tokenizer(gguf)
 		specialTokens[specialTokensList[i]] = base_tokens + i
 	end
 
-	local LLAMA_3_PATTERN = "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+"
 	-- actual tokenizer here
 	local merges2 = {}
 
@@ -309,169 +308,58 @@ local function Tokenizer(gguf)
 		merges2[pair[1] .. "|" .. pair[2]] = vocabulary.getIndex(vocabulary.get(pair[1]) .. vocabulary.get(pair[2]))
 	end
 
-	local function utf8_uint32(char, offset)
-		if char == "" then return -1 end
+	local function encode2(str, special)
+		if not special then encode_ordinary(str) end
 
-		offset = offset or 1
-		local byte = char:byte(offset)
-
-		if byte and byte >= 128 then
-			if byte >= 240 then
-				if #char < 4 then return -1 end
-
-				byte = (byte % 8) * 262144
-				byte = byte + (char:byte(offset + 1) % 64) * 4096
-				byte = byte + (char:byte(offset + 2) % 64) * 64
-				byte = byte + (char:byte(offset + 3) % 64)
-			elseif byte >= 224 then
-				if #char < 3 then return -1 end
-
-				byte = (byte % 16) * 4096
-				byte = byte + (char:byte(offset + 1) % 64) * 64
-				byte = byte + (char:byte(offset + 2) % 64)
-			elseif byte >= 192 then
-				if #char < 2 then return -1 end
-
-				byte = (byte % 32) * 64
-				byte = byte + (char:byte(offset + 1) % 64)
-			else
-				byte = -1
-			end
+		for k, v in pairs(special) do
+			assert(specialTokens[k])
 		end
 
-		return byte
+		local specialPattern = {}
+
+		for k, v in pairs(special) do
+			table.insert(specialPattern, "\"" .. specialPattern .. "\"")
+		end
+
+		specialPattern = "(" .. table.concat(specialPattern, "|") .. ")"
 	end
-
-	function bytesToUnicode()
-		local function table_contains(tbl, item)
-			for _, value in pairs(tbl) do
-				if value == item then return true end
-			end
-
-			return false
-		end
-
-		local bs = {}
-
-		for i = utf8_uint32("!"), utf8_uint32("~") do
-			table.insert(bs, i)
-		end
-
-		for i = utf8_uint32("¡"), utf8_uint32("¬") do
-			table.insert(bs, i)
-		end
-
-		for i = utf8_uint32("®"), utf8_uint32("ÿ") do
-			table.insert(bs, i)
-		end
-
-		local cs = {}
-
-		for _, v in ipairs(bs) do
-			table.insert(cs, v)
-		end
-
-		local n = 0
-
-		for b = 0, 255 do
-			if not table_contains(bs, b) then
-				table.insert(bs, b)
-				table.insert(cs, 256 + n)
-				n = n + 1
-			end
-		end
-
-		local result = {}
-
-		for i = 1, #bs do
-			result[bs[i]] = cs[i]
-		end
-
-		return result
-	end
-
-	local BYTESMAP = bytesToUnicode()
 
 	local function encode(str)
-		local function encode(str, special)
-			if not special then encode_ordinary(str) end
-
-			for k, v in pairs(special) do
-				assert(specialTokens[k])
+		local function bytemap(b)
+			if b <= 32 then
+				return string.char(196, 128 + b)
+			elseif b > 32 and b < 127 then
+				return string.char(b)
+			elseif b >= 127 and b <= 157 then
+				return string.char(196, b - 127 + 161)
+			elseif b > 157 and b <= 160 then
+				return string.char(197, b - 158 + 128)
+			elseif b == 173 then
+				return string.char(197, 131)
+			elseif b > 160 and b <= 191 then
+				return string.char(194, b)
+			elseif b > 191 then
+				return string.char(195, b - 192 + 128)
 			end
 
-			local specialPattern = {}
-
-			for k, v in pairs(special) do
-				table.insert(specialPattern, "\"" .. specialPattern .. "\"")
-			end
-
-			specialPattern = "(" .. table.concat(specialPattern, "|") .. ")"
-		end
-
-		local function get_stats(ids)
-			local map = {}
-
-			for i = 1, #ids - 1 do
-				local key = ids[i + 0] .. "|" .. ids[i + 1]
-				map[key] = (map[key] or 0) + 1
-			end
-
-			return map
-		end
-
-		local function merge(ids, pair, idx)
-			local newIds = {}
-			local i = 1
-
-			while i <= #ids do
-				if pair == (ids[i] .. "|" .. (ids[i + 1] or "-")) then
-					table.insert(newIds, idx)
-					i = i + 2
-				else
-					table.insert(newIds, ids[i])
-					i = i + 1
-				end
-			end
-
-			return newIds
-		end
-
-		local function utf8_encode(cp)
-			if cp < 0x80 then
-				return string.char(cp)
-			elseif cp < 0x800 then
-				return string.char(0xC0 + math.floor(cp / 0x40), 0x80 + (cp % 0x40))
-			elseif cp < 0x10000 then
-				return string.char(
-					0xE0 + math.floor(cp / 0x1000),
-					0x80 + (math.floor(cp / 0x40) % 0x40),
-					0x80 + (cp % 0x40)
-				)
-			elseif cp < 0x200000 then
-				return string.char(
-					0xF0 + math.floor(cp / 0x40000),
-					0x80 + (math.floor(cp / 0x1000) % 0x40),
-					0x80 + (math.floor(cp / 0x40) % 0x40),
-					0x80 + (cp % 0x40)
-				)
-			end
+			error("byte out of range")
 		end
 
 		local function MERGE(str)
 			local ids = {}
 
 			for i = 1, #str do
-				local b = utf8_uint32(str, i)
-
-				if b ~= -1 then -- TODO, get length of utf8 string
-					local index = vocabulary.getIndex(utf8_encode(b))
-					table.insert(ids, index)
-				end
+				table.insert(ids, vocabulary.getIndex(bytemap(str:byte(i))))
 			end
 
 			while #ids > 2 do
-				local stats = get_stats(ids)
+				local stats = {}
+
+				for i = 1, #ids - 1 do
+					local key = ids[i + 0] .. "|" .. ids[i + 1]
+					stats[key] = (stats[key] or 0) + 1
+				end
+
 				local minPair
 				local minIndex = math.huge
 
@@ -484,30 +372,30 @@ local function Tokenizer(gguf)
 					end
 				end
 
-				if not merges2[minPair] then
-					break -- Nothing else can be merged anymore
+				if not merges2[minPair] then break end
+
+				local newIds = {}
+				local i = 1
+
+				while i <= #ids do
+					if minPair == (ids[i] .. "|" .. (ids[i + 1] or "-")) then
+						table.insert(newIds, merges2[minPair])
+						i = i + 2
+					else
+						table.insert(newIds, ids[i])
+						i = i + 1
+					end
 				end
 
-				local idx = merges2[minPair]
-				ids = merge(ids, minPair, idx)
+				ids = newIds
 			end
 
 			return ids
 		end
 
-		local new = {}
-
-		for i = 1, #str do
-			local test = str:byte(i)
-			local int = BYTESMAP[test]
-			table.insert(new, utf8_encode(int))
-		end
-
-		new = table.concat(new)
-
 		local tokens = {}
 
-		for i,v in ipairs(MERGE(new)) do
+		for i, v in ipairs(MERGE(str)) do
 			tokens[i] = v
 		end
 
@@ -515,27 +403,35 @@ local function Tokenizer(gguf)
 	end
 
 	do
-		local tks = encode("hello world")
-		assert(#tks == 2)
-		assert(tks[1] == 15340)
-		assert(tks[2] == 1918)
-	end
+		local tks = encode("dæt ær øn står ære å snåkke mæd deg")
+		local expected = {
+			67,
+			9371,
+			83,
+			66113,
+			81,
+			39218,
+			77,
+			357,
+			18382,
+			66113,
+			265,
+			13376,
+			4224,
+			3870,
+			91861,
+			296,
+			9371,
+			67,
+			5367,
+		}
+		assert(#tks == #expected)
 
-	do
-		local tks =encode[[John's quick to respond, isn't he? I've seen 123 birds, mostly sparrows, bluebirds, and crows. They're not "typical" birds; these'll fly up to 300 miles in a day! However, I'm not too keen on studying them further. Haven't you heard? It's strange, really.
-
--- "Yes," she said, "they've adapted well to urban life."
-
-No doubt, innovations in city planning—especially those focused on sustainability—will need to account for such wildlife. Urban environments, you know? They're teeming with life; not just birds, but also small mammals, insects, and plants. Oh, and remember, they'll need 'water sources' too. 
-
-Can't forget about the $%&* symbols in texts, right? Or punctuation!!! These elements can add "flavor" to any written piece.
-
-So, what'll it be? More studies or just admiring from afar?]]
-	
-		for k,v in pairs(tks) do
-			print(k,v)
+		for k, v in pairs(expected) do
+			assert(tks[k] == expected[k] + 1)
 		end
 	end
+
 	return {
 		vocabulary = vocabulary,
 		merges = merges,
@@ -740,10 +636,6 @@ local function loadArrayOfQuantized(size, getTensorEntry)
 end
 
 local function llama_weights(weights) end
-
-for k, v in pairs(gguf.tensors) do
-	print(k, v)
-end
 
 llama_weights(
 	{
