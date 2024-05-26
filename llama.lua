@@ -230,13 +230,11 @@ local function load_gguf(path)
 	local alignment = metadata["general.alignment"] or 32
 	local padding = alignment - (file:seek() % alignment)
 	file:seek("set", file:seek() + padding)
-	local tensor_data_offset = file:seek()
 
-	--local tensor_data = file:read()
 	for i, tensor in ipairs(tensors) do
 		file:seek("set", tonumber(tensor.offset))
-	--local tensor_blob = file:read(tonumber(tensor.byte_size))
-	--tensor.blob = tensor_blob
+		local tensor_blob = file:read(tonumber(tensor.byte_size))
+		tensor.blob = tensor_blob
 	end
 
 	local tensor_map = {}
@@ -298,7 +296,7 @@ local function Tokenizer(gguf)
 	local specialTokens = {}
 
 	for i = 1, #specialTokensList do
-		specialTokens[specialTokensList[i]] = base_tokens + i
+		specialTokens[specialTokensList[i]] = base_tokens + i - 1
 	end
 
 	-- actual tokenizer here
@@ -348,8 +346,31 @@ local function Tokenizer(gguf)
 		local function MERGE(str)
 			local ids = {}
 
-			for i = 1, #str do
-				table.insert(ids, vocabulary.getIndex(bytemap(str:byte(i))))
+			table.sort(specialTokensList, function(a, b)
+				return #a > #b
+			end)
+
+			local i = 1
+
+			while i <= #str do
+				local found = false
+
+				if str:sub(i, i + 1) == "<|" then
+					for k, v in pairs(specialTokensList) do
+						if str:sub(i, i + #v - 1) == v then
+							i = i + #v
+							table.insert(ids, specialTokens[v])
+							found = true
+
+							break
+						end
+					end
+				end
+
+				if not found then
+					table.insert(ids, vocabulary.getIndex(bytemap(str:byte(i))))
+					i = i + 1
+				end
 			end
 
 			while #ids > 2 do
@@ -433,6 +454,7 @@ local function Tokenizer(gguf)
 	end
 
 	return {
+		encode = encode,
 		vocabulary = vocabulary,
 		merges = merges,
 		specialTokens = specialTokens,
@@ -457,6 +479,23 @@ local sharedWeights = false
 local rmsNormEps = gguf.metadata["llama.attention.layer_norm_rms_epsilon"] or 1e-5
 local ropeTheta = gguf.metadata["llama.rope.freq_base"] or 10000
 local headSize = dim / numberOfHeads
+local configuration = {
+	gguf = gguf,
+	tokenizer = tokenizer,
+	context_length = context_length,
+	model_context_length = model_context_length,
+	dim = dim,
+	hiddenDim = hiddenDim,
+	numberOfLayers = numberOfLayers,
+	numberOfHeads = numberOfHeads,
+	numberOfKeyValueHeads = numberOfKeyValueHeads,
+	vocabularySize = vocabularySize,
+	contextLength = contextLength,
+	sharedWeights = sharedWeights,
+	rmsNormEps = rmsNormEps,
+	ropeTheta = ropeTheta,
+	headSize = headSize,
+}
 
 local function rope_freq(context_length, head_size, theta)
 	assert(head_size % 2 == 0)
@@ -635,48 +674,195 @@ local function loadArrayOfQuantized(size, getTensorEntry)
 	return array
 end
 
-local function llama_weights(weights) end
+local weights = {
+	-- token embedding table
+	token_embedding_table = loadQuantized(gguf.tensors["token_embd.weight"]), -- (vocab_size, dim)
+	-- weights for rmsnorms
+	rms_att_weight = loadArrayOfFloatBuffer(numberOfLayers, function(i)
+		return gguf.tensors["blk." .. i .. ".attn_norm.weight"]
+	end), -- (layer, dim) rmsnorm weights
+	-- weights for matmuls
+	wq = loadArrayOfQuantized(numberOfLayers, function(i)
+		return gguf.tensors["blk." .. i .. ".attn_q.weight"]
+	end), -- (layer, n_heads * head_size)
+	wk = loadArrayOfQuantized(numberOfLayers, function(i)
+		return gguf.tensors["blk." .. i .. ".attn_k.weight"]
+	end), -- (layer, n_kv_heads, head_size)
+	wv = loadArrayOfQuantized(numberOfLayers, function(i)
+		return gguf.tensors["blk." .. i .. ".attn_v.weight"]
+	end), -- (layer, n_kv_heads * head_size)
+	wo = loadArrayOfQuantized(numberOfLayers, function(i)
+		return gguf.tensors["blk." .. i .. ".attn_output.weight"]
+	end), -- (layer, n_heads * head_size, dim)
+	rms_ffn_weight = loadArrayOfFloatBuffer(numberOfLayers, function(i)
+		return gguf.tensors["blk." .. i .. ".ffn_norm.weight"]
+	end), -- (layer, dim)
+	-- weights for ffn
+	w1 = loadArrayOfQuantized(numberOfLayers, function(i)
+		return gguf.tensors["blk." .. i .. ".ffn_gate.weight"]
+	end), -- w1 -- (layer, hidden_dim, dim)
+	w2 = loadArrayOfQuantized(numberOfLayers, function(i)
+		return gguf.tensors["blk." .. i .. ".ffn_down.weight"]
+	end), -- w2 -- (layer, dim, hidden_dim)
+	w3 = loadArrayOfQuantized(numberOfLayers, function(i)
+		return gguf.tensors["blk." .. i .. ".ffn_up.weight"]
+	end), -- w -- (layer, hidden_dim, dim)
+	-- public final rmsnorm
+	rms_final_weight = toFloatBuffer(gguf.tensors["output_norm.weight"]), -- (dim,)
+	-- freq_cis for RoPE relatively positional embeddings
+	freq_cis_real = ropeFreqsReal, -- (seq_len, head_size/2)
+	freq_cis_imag = ropeFreqsImag, -- (seq_len, head_size/2)
+	-- (optional) classifier weights for the logits, on the last layer
+	wcls = loadQuantized(gguf.tensors["output.weight"]), -- (vocab_size, dim)
+}
 
-llama_weights(
-	{
-		-- token embedding table
-		token_embedding_table = loadQuantized(gguf.tensors["token_embd.weight"]), -- (vocab_size, dim)
-		-- weights for rmsnorms
-		rms_att_weight = loadArrayOfFloatBuffer(numberOfLayers, function(i)
-			return gguf.tensors["blk." .. i .. ".attn_norm.weight"]
-		end), -- (layer, dim) rmsnorm weights
-		-- weights for matmuls
-		wq = loadArrayOfQuantized(numberOfLayers, function(i)
-			return gguf.tensors["blk." .. i .. ".attn_q.weight"]
-		end), -- (layer, n_heads * head_size)
-		wk = loadArrayOfQuantized(numberOfLayers, function(i)
-			return gguf.tensors["blk." .. i .. ".attn_k.weight"]
-		end), -- (layer, n_kv_heads, head_size)
-		wv = loadArrayOfQuantized(numberOfLayers, function(i)
-			return gguf.tensors["blk." .. i .. ".attn_v.weight"]
-		end), -- (layer, n_kv_heads * head_size)
-		wo = loadArrayOfQuantized(numberOfLayers, function(i)
-			return gguf.tensors["blk." .. i .. ".attn_output.weight"]
-		end), -- (layer, n_heads * head_size, dim)
-		rms_ffn_weight = loadArrayOfFloatBuffer(numberOfLayers, function(i)
-			return gguf.tensors["blk." .. i .. ".ffn_norm.weight"]
-		end), -- (layer, dim)
-		-- weights for ffn
-		w1 = loadArrayOfQuantized(numberOfLayers, function(i)
-			return gguf.tensors["blk." .. i .. ".ffn_gate.weight"]
-		end), -- w1 -- (layer, hidden_dim, dim)
-		w2 = loadArrayOfQuantized(numberOfLayers, function(i)
-			return gguf.tensors["blk." .. i .. ".ffn_down.weight"]
-		end), -- w2 -- (layer, dim, hidden_dim)
-		w3 = loadArrayOfQuantized(numberOfLayers, function(i)
-			return gguf.tensors["blk." .. i .. ".ffn_up.weight"]
-		end), -- w -- (layer, hidden_dim, dim)
-		-- public final rmsnorm
-		rms_final_weight = toFloatBuffer(gguf.tensors["output_norm.weight"]), -- (dim,)
-		-- freq_cis for RoPE relatively positional embeddings
-		freq_cis_real = ropeFreqsReal, -- (seq_len, head_size/2)
-		freq_cis_imag = ropeFreqsImag, -- (seq_len, head_size/2)
-		-- (optional) classifier weights for the logits, on the last layer
-		wcls = loadQuantized(gguf.tensors["output.weight"]), -- (vocab_size, dim)
-	}
-)
+local function selectSampler(vocabularySize, temperature, topp, rngSeed)
+	local sampler
+
+	if temperature == 0 then
+		sampler = function(logits)
+			return logits:GetFloat(0)
+		end
+	else
+		local innerSampler
+
+		if topp <= 0 or topp >= 1 then
+			innerSampler = function(logits)
+				local random0to1 = math.random()
+				local cdf = 0
+
+				for i = 0, logits:Size() - 1 do
+					cdf = cdf + logits:GetFloat(i)
+
+					if random0to1 < cdf then return i end
+				end
+
+				return logits:Size() - 1
+			end
+		else
+			local indices = {}
+			local topp = topp
+			local rngSeed = rngSeed
+			innerSampler = function() end
+		end
+
+		sampler = function(logits)
+			logits:DiviceInPlace(0, logits:size(), temperature)
+			logits:SoftMaxInPlace(0, logits:Size())
+			return innerSampler(logits)
+		end
+	end
+
+	return sampler
+end
+
+local topp = 0.95
+local sampler = selectSampler(vocabularySize, 0, topp, 1337)
+local context = [[<|start_header_id|>system<|end_header_id|>
+]] .. "you are a helpful chatbot" .. [[<|eot_id|><|start_header_id|>user<|end_header_id|>
+]] .. "hello" .. [[<|eot_id|><|start_header_id|>assistant<|end_header_id|><|eot_id|>]]
+
+for k, v in ipairs(tokenizer.encode(context)) do
+	print(k, v, tokenizer.vocabulary.tokens[v])
+end
+
+local function forward(c, w, s, token, position)
+	local dim = c.dim
+	local headSize = c.headSize
+	local kvDim = (c.dim * c.numberOfKeyValueHeads) / c.numberOfHeads
+	local kvMul = c.numberOfHeads / c.numberOfKeyValueHeads
+	local sqrtHeadSize = math.sqrt(headSize)
+	w.token_embedding_table:CopyTo(token * dim, s.x, 0, dim)
+
+	for l = 1, config.numberOfLayers do
+		rmsnorm(s.xb, s.x, w.rms_att_weight[l - 1], dim, rmsNormEps)
+		w.wq[l]:MatMul(s.xb, s.q, dim, dim)
+		w.wk[l]:MatMul(s.xb, s.k, kvDim, dim)
+		w.wv[l]:MatMul(s.xb, s.v, kvDim, dim)
+
+		for i = 0, dim - 1, 2 do
+			local head_dim = i % headSize
+			local fcr = w.freq_cis_real:Get(position * (headSize / 2) + (head_dim / 2))
+			local fci = w.freq_cis_imag:Get(position * (headSize / 2) + (head_dim / 2))
+			local rotn = i < kvDim and 2 or 1
+
+			for v = 0, rotn - 1 do
+				local vec = v == 0 and s.q or s.v
+				local v0 = vec:GetFloat(i)
+				local v1 = vec:GetFloat(i + 1)
+				vec:SetFloat(i, v0 * fcr - v1 * fci)
+				vec:SetFloat(i + 1, v0 * fcr + v1 * fci)
+			end
+
+			s.k:copyTo(0, s.keyCache[l], position * kvDim, kvDim)
+			s.v:copyTo(0, s.valueCache[l], position * kvDim, kvDim)
+			local curLayer = l
+
+			for h = 0, c.numberOfHeads do
+				local qOffset = h * headSize
+				local attOffset = h * c.contextLength
+
+				for t = 0, position do
+					local keyCacheOffset = t * kvDim + (h / kvMul) * headSize
+					local score = s.q:Dot(qOffset, s.keyCache[curLayer], keyCacheOffset, headSize)
+					score = score / sqrtHeadSize
+					s.att:SetFloat(attOffset + t, score)
+				end
+
+				s.att:SoftMaxInPlace(attOffset, position + 1)
+				local xbOffset = h * headSize
+				s.xb:FillInPlace(xbOffset, headSize, 0)
+
+				for t = 0, position do
+					local vOffset = t * kvDim + (h / kvMul) * headSize
+					local a = state.att:GetFloat(attOffset + t)
+					state.xb:SaxxyInPlace(xbOffset, s.valueCache[curLayer], vOffset, headSize, a)
+				end
+			end
+		end
+	end
+
+	// final matmul to get the output of the attention
+	weights.wo[l].matmul(state.xb, state.xb2, dim, dim);
+
+	// residual connection back into x
+	state.x.addInPlace(state.xb2);
+
+	// ffn rmsnorm
+	rmsnorm(state.xb, state.x, weights.rms_ffn_weight[l], dim, config.rmsNormEps);
+
+	// Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
+	// first calculate self.w1(x) and self.w3(x)
+	weights.w1[l].matmul(state.xb, state.hb, config.hiddenDim, dim);
+	weights.w3[l].matmul(state.xb, state.hb2, config.hiddenDim, dim);
+
+	// SwiGLU non-linearity
+	// silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
+	state.hb.mapInPlace(value -> value / (float) (1.0 + Math.exp(-value)));
+
+	// elementwise multiply with w3(x)
+	state.hb.multiplyInPlace(state.hb2);
+
+	// final matmul to get the output of the ffn
+	weights.w2[l].matmul(state.hb, state.xb, dim, config.hiddenDim);
+
+	// residual connection
+	state.x.addInPlace(state.xb);
+end
+
+local state = {
+	x = FloatTensor(),
+	xb = FloatTensor(),
+	xb2 = FloatTensor(),
+	hb = FloatTensor(),
+	hb2 = FloatTensor(),
+	q = FloatTensor(),
+	k = FloatTensor(),
+	v = FloatTensor(),
+	att = FloatTensor(),
+	logits = FloatTensor(),
+	keyCache = {},
+	valueCache = {},
+	latestToken = 0,
+}
+forward(configuration, weights, state)
