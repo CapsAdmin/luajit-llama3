@@ -1,3 +1,11 @@
+local test = io.open("debug.txt", "w")
+function START_DEBUG()
+    debug.sethook(function(event, line)
+        local s = debug.getinfo(2).short_src
+        test:write(s .. ":" .. line .. "\n")
+    end, "l")
+end
+
 local ffi = require("ffi")
 local ggf = require("gguf")
 local Tokenizer = require("tokenizer")
@@ -18,7 +26,7 @@ local context = [[<|start_header_id|>system<|end_header_id|>
 ]] .. "hello" .. [[<|eot_id|><|start_header_id|>assistant<|end_header_id|><|eot_id|>]]
 
 for k, v in ipairs(tokenizer.encode(context)) do
-	print(k, v, tokenizer.vocabulary.tokens[v])
+	--print(k, v, tokenizer.vocabulary.tokens[v])
 end
 
 local function rmsnorm(out, x, weight, size, rmsNormEps)
@@ -26,7 +34,6 @@ local function rmsnorm(out, x, weight, size, rmsNormEps)
 	ss = ss / size;
 	ss = ss + rmsNormEps;
 	ss = 1.0 / math.sqrt(ss)
-    print("map in place")
 	out:MapWithIndexInPlace(0, size, function(value, index) 
 		return weight:GetFloat(index) * (ss * x:GetFloat(index)) 
 	end)
@@ -44,16 +51,13 @@ local function forward(c, w, s, token, position)
 		print("layer: ", l)
 		rmsnorm(s.xb, s.x, w.rms_att_weight[l], dim, c.rmsNormEps)
 		w.wq[l]:MatMul(s.xb, s.q, dim, dim)
-		error("UH OH")
 		w.wk[l]:MatMul(s.xb, s.k, kvDim, dim)
 		w.wv[l]:MatMul(s.xb, s.v, kvDim, dim)
 
-		error("HUH HOH")
-
 		for i = 0, dim - 1, 2 do
 			local head_dim = i % headSize
-			local fcr = w.freq_cis_real:Get(position * (headSize / 2) + (head_dim / 2))
-			local fci = w.freq_cis_imag:Get(position * (headSize / 2) + (head_dim / 2))
+			local fcr = c.ropeFreqsReal[1+(position * (headSize / 2) + (head_dim / 2))]
+			local fci = c.ropeFreqsImag[1+(position * (headSize / 2) + (head_dim / 2))]
 			local rotn = i < kvDim and 2 or 1
 
 			for v = 0, rotn - 1 do
@@ -64,15 +68,15 @@ local function forward(c, w, s, token, position)
 				vec:SetFloat(i + 1, v0 * fcr + v1 * fci)
 			end
 
-			s.k:copyTo(0, s.keyCache[l], position * kvDim, kvDim)
-			s.v:copyTo(0, s.valueCache[l], position * kvDim, kvDim)
+			s.k:CopyTo(0, s.keyCache[l], position * kvDim, kvDim)
+			s.v:CopyTo(0, s.valueCache[l], position * kvDim, kvDim)
 			local curLayer = l
 
-			for h = 0, c.numberOfHeads do
+			for h = 0, c.numberOfHeads-1 do
 				local qOffset = h * headSize
 				local attOffset = h * c.contextLength
 
-				for t = 0, position do
+				for t = 0, position-1 do
 					local keyCacheOffset = t * kvDim + (h / kvMul) * headSize
 					local score = s.q:Dot(qOffset, s.keyCache[curLayer], keyCacheOffset, headSize)
 					score = score / sqrtHeadSize
@@ -83,47 +87,56 @@ local function forward(c, w, s, token, position)
 				local xbOffset = h * headSize
 				s.xb:FillInPlace(xbOffset, headSize, 0)
 
-				for t = 0, position do
+				for t = 0, position-1 do
 					local vOffset = t * kvDim + (h / kvMul) * headSize
-					local a = state.att:GetFloat(attOffset + t)
+					local a = s.att:GetFloat(attOffset + t)
 					s.xb:SaxyInPlace(xbOffset, s.valueCache[curLayer], vOffset, headSize, a)
 				end
 			end
 		end
 
 		w.wo[l]:MatMul(s.xb, s.xb2, dim, dim)
-		s.x:addInPlace(s.xb2)
+		s.x:AddTensorInPlace(s.xb2)
 		rmsnorm(s.xb, s.x, w.rms_ffn_weight[l], dim, c.rmsNormEps)
 		w.w1[l]:MatMul(s.xb, s.hb, c.hiddenDim, dim)
 		w.w3[l]:MatMul(s.xb, s.hb2, c.hiddenDim, dim)
 
-		s.hb:mapInPlace(function(value)
+		s.hb:MapInPlace(0, s.hb.size, function(value)
 			return value / (1.0 + math.exp(-value))
 		end)
 
-		s.hb:multiplyInPlace(s.hb2)
+		s.hb:MultiplyTensorInPlace(s.hb2)
 		w.w2[l]:MatMul(s.hb, s.xb, dim, c.hiddenDim)
-		s.x:addInPlace(s.xb)
+		s.x:AddTensorInPlace(s.xb)
 	end
 end
 
 local config = configuration
 
+local kvDim = (config.dim * config.numberOfKeyValueHeads) / config.numberOfHeads;
+
 local state = {
-	x = Tensor:F32(config.dim),
-	xb = Tensor:F32(config.dim),
-	xb2 = Tensor:F32(config.dim),
-	hb = Tensor:F32(config.hiddenDim),
-	hb2 = Tensor:F32(config.hiddenDim),
-	q = Tensor:F32(config.dim),
-	k = Tensor:F32(config.dim),
-	v = Tensor:F32(config.dim),
-	att = Tensor:F32(config.numberOfHeads * config.contextLength),
-	logits = Tensor:F32(config.vocabularySize),
-	keyCache = {},
-	valueCache = {},
+	x = Tensor:F32(config.dim):SetName("x[F32]"),
+	xb = Tensor:F32(config.dim):SetName("xb[F32]"),
+	xb2 = Tensor:F32(config.dim):SetName("xb2[F32]"),
+	hb = Tensor:F32(config.hiddenDim):SetName("hb[F32]"),
+	hb2 = Tensor:F32(config.hiddenDim):SetName("hb2[F32]"),
+	q = Tensor:F32(config.dim):SetName("q[F32]"),
+	k = Tensor:F32(config.dim):SetName("k[F32]"),
+	v = Tensor:F32(config.dim):SetName("v[F32]"),
+	att = Tensor:F32(config.numberOfHeads * config.contextLength):SetName("att[F32]"),
+	logits = Tensor:F32(config.vocabularySize):SetName("logits[F32]"),
+	keyCache = (function() local a = {} for i = 1, config.numberOfLayers do a[i] = Tensor:F32(config.contextLength * kvDim) end return a end)(),
+	valueCache = (function() local a = {} for i = 1, config.numberOfLayers do a[i] = Tensor:F32(config.contextLength * kvDim) end return a end)(),
 	latestToken = 0,
 }
+
+_G.gc_refs = {
+    state, weights,
+}
+
+--collectgarbage("stop")
+
 local token = 0
 local pos = 0
 forward(configuration, weights, state, token, pos)

@@ -11,12 +11,25 @@ function Tensor:new(size, blob, blob_ref, get_float, set_float)
     assert(type(get_float) == "function")
 
     t.blob = blob
-    t.size = size
+    t.size = tonumber(size)
     t.SetFloat = set_float
     t.GetFloat = get_float
     t.blob_ref = blob_ref -- need to keep this around
 
     return t
+end
+
+function Tensor:SetName(n)
+    self.name = n
+    return self
+end
+
+function Tensor:__tostring()
+    if self.name then
+        return self.name .. "["..tostring(self.size).."]"
+    end
+
+    return "Tensor["..self.size.."]"
 end
 
 local ggf = require("gguf")
@@ -52,16 +65,40 @@ do
     local type_size = ggf.GGMLTypeMap.Q4_0.typeSize
     local FLOAT16 = 2
 
+    local function read_half(blob, index)
+        local b = blob[index]
+        local sign = 1
+
+        if b >= 128 then
+            sign = -1
+            b = b - 128
+        end
+
+        local exponent = bit.rshift(b, 2) - 15
+        local mantissa = bit.band(b, 3) / 4
+        b = blob[index+1]
+        mantissa = mantissa + b / 4 / 256
+
+        if mantissa == 0.0 and exponent == -15 then
+            return 0.0
+        else
+            return (mantissa + 1.0) * math.pow(2, exponent) * sign
+        end
+    end
+
     local function get_float(self, index)
         assert(index >= 0)
         assert(index < self.size)
     
         local block_index = index / block_size
         local block_offset = block_index * type_size
+
+        assert(block_offset >= 0)
+        assert(block_offset < self.size)
         
         local blob = self.blob
-    
-        local scale = blob[index] -- read uint16_t
+
+        local scale = read_half(blob, block_offset)
         local quant
         local modIndex = index % block_size
     
@@ -75,7 +112,12 @@ do
         end
     
         quant = quant - 8
-        return quant * scale
+        quant = quant * scale
+
+        local num = quant
+        assert(num and num ~= inf and num ~= ninf and (num >= 0 or num <= 0))
+
+        return quant
     end
 
     local function set_float(self, index, value)
@@ -89,11 +131,11 @@ do
         local blob_ref = blob
 
         if not blob then
-            blob = ffi.new("uint16_t[?]", size)
+            blob = ffi.new("uint8_t[?]", size)
             blob_ref = blob
         end
 
-        return Tensor:new(size, ffi.cast("uint16_t *", blob), blob_ref, get_float, set_float)
+        return Tensor:new(size, ffi.cast("uint8_t *", blob), blob_ref, get_float, set_float)
     end
 end
 
@@ -103,8 +145,12 @@ end
 
 function Tensor:ScalarDot(thisOffset, that, thatOffset, size)
     local result = 0
+    local prev
     for j = 0, size - 1 do
-        result = result + self:GetFloat(thisOffset + j) * that:GetFloat(thatOffset + j)
+        local a = self:GetFloat(thisOffset + j)
+        local b = that:GetFloat(thatOffset + j)
+        prev = result
+        result = result + a * b
     end
 
     return result
@@ -144,6 +190,53 @@ end
 
 function Tensor:CopyTo(thisOffset, that, thatOffset, size)
     return that:MapWithIndexInPlace(thatOffset, size, function(value, index) return self:GetFloat(index - thatOffset + thisOffset) end);
+end
+
+function Tensor:MapInPlace(thisOffset, size, mapFunction)
+    local endIndex = thisOffset + size
+    for i = thisOffset, endIndex - 1 do
+        self:SetFloat(i, mapFunction(self:GetFloat(i)))
+    end
+    return self
+end
+
+function Tensor:DivideInPlace(thisOffset, size, value)
+    return self:MapInPlace(thisOffset, size, function(f) return f / value end)
+end
+
+function Tensor:AddTensorInPlaceOffset(thisOffset, that, thatOffset, size)
+    self:MapWithIndexInPlace(thisOffset, size, function(value, index) return value + that:GetFloat(index - thisOffset + thatOffset) end)
+end
+
+function Tensor:AddTensorInPlace(that)
+    return self:AddTensorInPlaceOffset(0, that, 0, self.size)
+end
+
+
+function Tensor:MultiplyTensorInPlaceOffset(thisOffset, that, thatOffset, size)
+    self:MapWithIndexInPlace(thisOffset, size, function(value, index) return value * that:GetFloat(index - thisOffset + thatOffset) end)
+end
+
+function Tensor:MultiplyTensorInPlace(that)
+    return self:MultiplyTensorInPlaceOffset(0, that, 0, self.size)
+end
+
+function Tensor:FillInPlace(thisOffset, size, value)
+    return self:MapInPlace(thisOffset, size, function(f) return value end)
+end
+
+function Tensor:SaxyInPlace(thisOffset, that, thatOffset, size, a)
+    for i = 0, size - 1 do
+        self:SetFloat(thisOffset + i, a * that:GetFloat(thatOffset + i) + this:GetFloat(thisOffset + i))
+    end
+    return self
+end
+
+function Tensor:SoftMaxInPlace(thisOffset, size)
+    local maxVal = self:Max(thisOffset, size)
+    self:MapInPlace(thisOffset, size, function(f) return math.exp(f - maxVal) end)
+    local sum = self:Sum(thisOffset, size)
+    return self:DivideInPlace(thisOffset, size, sum)
 end
 
 function Tensor:MapWithIndexInPlace(thisOffset, size, mapWithIndexFunction)
