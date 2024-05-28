@@ -2,31 +2,23 @@ local Tensor = require("tensor")
 local ffi = require("ffi")
 
 local function loadTensor(entry, name)
-    print("loading tensor of size " .. tostring(entry.size) .. " and type " .. entry.type_info.name)
-
     if Tensor[entry.type_info.name] then
-        return Tensor[entry.type_info.name](Tensor, entry.size, entry.blob):SetName(name.."["..entry.type_info.name.."]")
+        local t = Tensor[entry.type_info.name](Tensor, entry.size, entry.blob):SetName(name.."["..entry.type_info.name.."]")
+        print("loaded " .. tostring(t))
+        return t
     end
 
     error("NYI tensor type: " .. entry.type_info.name)
 end
 
-local function loadTensorArray(size, getTensorEntry, set, get)
+local function loadTensorArray(size, getTensorEntry)
     local array = {}
 
-    for i = 1, size do
-        array[i-1] = loadTensor(getTensorEntry(i - 1))
+    for i = 0, size-1 do
+        array[i] = loadTensor(getTensorEntry(i))
     end
 
-    return setmetatable({}, {
-        __index = function(s, i) 
-            assert(i >= 0)
-            assert(i < size)
-            assert(array[i])
-            print(s, i, array[i], "!??!?!")
-            return array[i] 
-        end
-    })
+    return array
 end
 
 local function Weights(tensors, numberOfLayers) 
@@ -36,6 +28,7 @@ local function Weights(tensors, numberOfLayers)
         -- weights for rmsnorms
         rms_att_weight = loadTensorArray(numberOfLayers, function(i)
             local name = "blk." .. i .. ".attn_norm.weight"
+            print(name)
             return tensors[name], name
         end), -- (layer, dim) rmsnorm weights
         -- weights for matmuls

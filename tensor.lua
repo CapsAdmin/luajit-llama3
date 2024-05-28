@@ -2,6 +2,16 @@ local ffi = require("ffi")
 local Tensor = {}
 Tensor.__index = Tensor
 
+local function valid_number(num, self, i)
+    if num and num ~= inf and num ~= ninf and (num >= 0 or num <= 0) then
+        return num
+    end
+
+    error(tostring(self) .. ".blob contains an invalid number at index " .. i .. ": " .. tostring(num))
+
+    return num
+end
+
 function Tensor:new(size, blob, blob_ref, get_float, set_float)
     local t = setmetatable({}, Tensor)
     assert(type(size) == "number" or type(size) == "cdata") -- ULL
@@ -14,7 +24,7 @@ function Tensor:new(size, blob, blob_ref, get_float, set_float)
     t.size = tonumber(size)
     t.SetFloat = set_float
     t.GetFloat = get_float
-    t.blob_ref = blob_ref -- need to keep this around
+    t.blob_ref = blob_ref -- need to keep this around for gc
 
     return t
 end
@@ -32,19 +42,20 @@ function Tensor:__tostring()
     return "Tensor["..self.size.."]"
 end
 
+
 local ggf = require("gguf")
 do
     local function get_float(self, index)
         assert(index >= 0)
         assert(index < self.size)
-    
+        
         return self.blob[index]
     end
     
     local function set_float(self, index, val)
         assert(index >= 0)
         assert(index < self.size)
-    
+
         self.blob[index] = val
     end
 
@@ -113,10 +124,6 @@ do
     
         quant = quant - 8
         quant = quant * scale
-
-        local num = quant
-        assert(num and num ~= inf and num ~= ninf and (num >= 0 or num <= 0))
-
         return quant
     end
 

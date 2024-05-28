@@ -1,8 +1,8 @@
 local ffi = require("ffi")
 ffi.cdef[[
 	typedef struct FILE FILE;
-	void *malloc(size_t size);
 	size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream);
+	int fseek( FILE* stream, long offset, int origin );
 ]]
 local GGMLType, GGMLTypeMap = (
 	function()
@@ -225,19 +225,23 @@ local function load_gguf(path)
 
 	local alignment = metadata["general.alignment"] or 32
 	local padding = alignment - (file:seek() % alignment)
-	file:seek("set", file:seek() + padding)
+	local pos = file:seek() + padding
 
 	for i, tensor in ipairs(tensors) do
-		file:seek("set", tonumber(tensor.offset))
+		file:seek("set", pos + tonumber(tensor.offset))
 
 		local remaining_size = tensor.byte_size
-		local buffer = ffi.C.malloc(remaining_size)
+		local buffer = ffi.new("uint8_t[?]", remaining_size)
 		local bytes_read = ffi.C.fread(buffer, 1, remaining_size, file)
 
 		if bytes_read ~= remaining_size then
-			ffi.C.free(buffer)
 			file:close()
 			error("Failed to read the tensor")
+		end
+
+		if tensor.name == "blk.0.attn_norm.weight" then
+			local test = ffi.cast("float*", buffer)
+			assert(test[585] == 0.5625)
 		end
 
 		tensor.blob = buffer

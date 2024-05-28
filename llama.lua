@@ -48,7 +48,7 @@ local function forward(c, w, s, token, position)
 	w.token_embedding_table:CopyTo(token * dim, s.x, 0, dim)
 
 	for l = 1, c.numberOfLayers do
-		print("layer: ", l)
+		print("layer: ", l, " / ", c.numberOfLayers)
 		rmsnorm(s.xb, s.x, w.rms_att_weight[l], dim, c.rmsNormEps)
 		w.wq[l]:MatMul(s.xb, s.q, dim, dim)
 		w.wk[l]:MatMul(s.xb, s.k, kvDim, dim)
@@ -109,6 +109,12 @@ local function forward(c, w, s, token, position)
 		w.w2[l]:MatMul(s.hb, s.xb, dim, c.hiddenDim)
 		s.x:AddTensorInPlace(s.xb)
 	end
+
+    rmsnorm(s.x, s.x, w.rms_final_weight, dim, c.rmsNormEps);
+
+    w.wcls:MatMul(s.x, s.logits, c.vocabularySize, dim);
+
+    return s.logits;
 end
 
 local config = configuration
@@ -132,11 +138,12 @@ local state = {
 }
 
 _G.gc_refs = {
-    state, weights,
+    state, 
+    weights,
 }
 
 --collectgarbage("stop")
 
 local token = 0
 local pos = 0
-forward(configuration, weights, state, token, pos)
+local logits = forward(configuration, weights, state, token, pos)
