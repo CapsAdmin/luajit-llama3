@@ -176,7 +176,6 @@ local function Tokenizer(gguf_tokens, gguf_merges)
 		vocabulary = vocabulary,
 		merges = merges,
 		specialTokens = specialTokens,
-		tokens = tokens,
 	}
 end
 

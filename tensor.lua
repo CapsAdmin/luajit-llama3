@@ -61,6 +61,7 @@ do
 
 		if not blob then
 			blob = ffi.cast("float*", ffi.C.malloc(size * 4))
+			ffi.fill(blob, size*4, 0)
 			blob_ref = blob
 		end
 
@@ -111,6 +112,7 @@ do
 
 		if not blob then
 			blob = ffi.cast("uint8_t*", ffi.C.malloc(size))
+			ffi.fill(blob, size, 0)
 			blob_ref = blob
 		end
 
@@ -255,7 +257,7 @@ end
 
 function Tensor:SaxyInPlace(thisOffset, that, thatOffset, size, a)
 	for i = 0, size - 1 do
-		self:SetFloat(thisOffset + i, a * that:GetFloat(thatOffset + i) + this:GetFloat(thisOffset + i))
+		self:SetFloat(thisOffset + i, a * that:GetFloat(thatOffset + i) + self:GetFloat(thisOffset + i))
 	end
 
 	return self

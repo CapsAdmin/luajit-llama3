@@ -2,6 +2,7 @@ require("luajit_options")()
 
 do
 	local timers = {}
+
 	function timer(what)
 		if what then
 			table.insert(timers, 1, {what = what, time = os.clock()})
@@ -17,39 +18,31 @@ local ggf = require("gguf")
 local Tokenizer = require("tokenizer")
 local Configuration = require("configuration")
 local Weights = require("weights")
-local Sampler = require("sampler")
 local Tensor = require("tensor")
 local gguf = ggf.load_gguf("/home/caps/projects/llama3.java/Meta-Llama-3-8B-Instruct-Q4_0.gguf")
+local Sampler = require("topp_sampler")
 assert(gguf.metadata["tokenizer.ggml.model"] == "gpt2")
 assert(gguf.metadata["tokenizer.ggml.tokens"])
 assert(gguf.metadata["tokenizer.ggml.merges"])
-local tokenizer = Tokenizer(gguf.metadata["tokenizer.ggml.tokens"], gguf.metadata["tokenizer.ggml.merges"]) 
-local configuration = Configuration(1000, gguf.metadata, tokenizer.vocabulary.size())
+local tokenizer = Tokenizer(gguf.metadata["tokenizer.ggml.tokens"], gguf.metadata["tokenizer.ggml.merges"])
+local configuration = Configuration(8192, gguf.metadata, tokenizer.vocabulary.size())
 local weights = Weights(gguf.tensors, configuration.numberOfLayers)
-local sampler = Sampler(tokenizer.vocabulary.size(), 0, 0.95, 1337)
-local context = [[<|start_header_id|>system<|end_header_id|>
-]] .. "you are a helpful chatbot" .. [[<|eot_id|><|start_header_id|>user<|end_header_id|>
-]] .. "hello" .. [[<|eot_id|><|start_header_id|>assistant<|end_header_id|><|eot_id|>]]
 
-for k, v in ipairs(tokenizer.encode(context)) do
-	--print(k, v, tokenizer.vocabulary.tokens[v])
-end
-
-
-print(
-	pcall(function()
-		local inject_threaded_matmul = require("threads")
-		inject_threaded_matmul(Tensor)
-	end)
-)
+pcall(function()
+	local inject_threaded_matmul = require("threads")
+	inject_threaded_matmul(Tensor)
+end)
 
 local function rmsnorm(out, x, weight, size, rmsNormEps)
-	local ss = x:Reduce(0, size, 0, function(acc, xi) return acc + xi * xi end);
-	ss = ss / size;
-	ss = ss + rmsNormEps;
+	local ss = x:Reduce(0, size, 0, function(acc, xi)
+		return acc + xi * xi
+	end)
+	ss = ss / size
+	ss = ss + rmsNormEps
 	ss = 1.0 / math.sqrt(ss)
-	out:MapInPlace(0, size, function(value, index) 
-		return weight:GetFloat(index) * (ss * x:GetFloat(index)) 
+
+	out:MapInPlace(0, size, function(value, index)
+		return weight:GetFloat(index) * (ss * x:GetFloat(index))
 	end)
 end
 
@@ -61,53 +54,50 @@ local function forward(c, w, s, token, position)
 	local sqrtHeadSize = math.sqrt(headSize)
 	w.token_embedding_table:CopyTo(token * dim, s.x, 0, dim)
 
-	for l = 0, c.numberOfLayers-1 do
-		print("layer: ", l, " / ", c.numberOfLayers)
+	for l = 0, c.numberOfLayers - 1 do
 		rmsnorm(s.xb, s.x, w.rms_att_weight[l], dim, c.rmsNormEps)
-
 		w.wq[l]:MatMul(s.xb, s.q, dim, dim)
 		w.wk[l]:MatMul(s.xb, s.k, kvDim, dim)
 		w.wv[l]:MatMul(s.xb, s.v, kvDim, dim)
 
-
 		for i = 0, dim - 1, 2 do
 			local head_dim = i % headSize
-			local fcr = c.ropeFreqsReal[1+(position * (headSize / 2) + (head_dim / 2))]
-			local fci = c.ropeFreqsImag[1+(position * (headSize / 2) + (head_dim / 2))]
+			local fcr = c.ropeFreqsReal[1 + ((position * (headSize / 2) + (head_dim / 2)))]
+			local fci = c.ropeFreqsImag[1 + ((position * (headSize / 2) + (head_dim / 2)))]
 			local rotn = i < kvDim and 2 or 1
 
 			for v = 0, rotn - 1 do
-				local vec = v == 0 and s.q or s.v
+				local vec = v == 0 and s.q or s.k
 				local v0 = vec:GetFloat(i)
 				local v1 = vec:GetFloat(i + 1)
 				vec:SetFloat(i, v0 * fcr - v1 * fci)
-				vec:SetFloat(i + 1, v0 * fcr + v1 * fci)
+				vec:SetFloat(i + 1, v0 * fci + v1 * fcr)
+			end
+		end
+
+		s.k:CopyTo(0, s.keyCache[l + 1], position * kvDim, kvDim)
+		s.v:CopyTo(0, s.valueCache[l + 1], position * kvDim, kvDim)
+		local curLayer = l
+
+		for h = 0, c.numberOfHeads - 1 do
+			local qOffset = h * headSize
+			local attOffset = h * c.contextLength
+
+			for t = 0, position do
+				local keyCacheOffset = t * kvDim + math.floor(h / kvMul) * headSize
+				local score = s.q:Dot(qOffset, s.keyCache[curLayer + 1], keyCacheOffset, headSize)
+				score = score / sqrtHeadSize
+				s.att:SetFloat(attOffset + t, score)
 			end
 
-			s.k:CopyTo(0, s.keyCache[l+1], position * kvDim, kvDim)
-			s.v:CopyTo(0, s.valueCache[l+1], position * kvDim, kvDim)
-			local curLayer = l
+			s.att:SoftMaxInPlace(attOffset, position + 1)
+			local xbOffset = h * headSize
+			s.xb:FillInPlace(xbOffset, headSize, 0)
 
-			for h = 0, c.numberOfHeads-1 do
-				local qOffset = h * headSize
-				local attOffset = h * c.contextLength
-
-				for t = 0, position-1 do
-					local keyCacheOffset = t * kvDim + (h / kvMul) * headSize
-					local score = s.q:Dot(qOffset, s.keyCache[curLayer], keyCacheOffset, headSize)
-					score = score / sqrtHeadSize
-					s.att:SetFloat(attOffset + t, score)
-				end
-
-				s.att:SoftMaxInPlace(attOffset, position + 1)
-				local xbOffset = h * headSize
-				s.xb:FillInPlace(xbOffset, headSize, 0)
-
-				for t = 0, position-1 do
-					local vOffset = t * kvDim + (h / kvMul) * headSize
-					local a = s.att:GetFloat(attOffset + t)
-					s.xb:SaxyInPlace(xbOffset, s.valueCache[curLayer], vOffset, headSize, a)
-				end
+			for t = 0, position do
+				local vOffset = t * kvDim + math.floor(h / kvMul) * headSize
+				local a = s.att:GetFloat(attOffset + t)
+				s.xb:SaxyInPlace(xbOffset, s.valueCache[curLayer + 1], vOffset, headSize, a)
 			end
 		end
 
@@ -126,17 +116,12 @@ local function forward(c, w, s, token, position)
 		s.x:AddTensorInPlace(s.xb)
 	end
 
-    rmsnorm(s.x, s.x, w.rms_final_weight, dim, c.rmsNormEps);
-
-    w.wcls:MatMul(s.x, s.logits, c.vocabularySize, dim);
-
-    return s.logits;
+	rmsnorm(s.x, s.x, w.rms_final_weight, dim, c.rmsNormEps)
+	w.wcls:MatMul(s.x, s.logits, c.vocabularySize, dim)
 end
 
 local config = configuration
-
-local kvDim = (config.dim * config.numberOfKeyValueHeads) / config.numberOfHeads;
-
+local kvDim = (config.dim * config.numberOfKeyValueHeads) / config.numberOfHeads
 local state = {
 	x = Tensor:F32(config.dim):SetName("x[F32]"),
 	xb = Tensor:F32(config.dim):SetName("xb[F32]"),
@@ -148,19 +133,48 @@ local state = {
 	v = Tensor:F32(config.dim):SetName("v[F32]"),
 	att = Tensor:F32(config.numberOfHeads * config.contextLength):SetName("att[F32]"),
 	logits = Tensor:F32(config.vocabularySize):SetName("logits[F32]"),
-	keyCache = (function() local a = {} for i = 1, config.numberOfLayers do a[i] = Tensor:F32(config.contextLength * kvDim) end return a end)(),
-	valueCache = (function() local a = {} for i = 1, config.numberOfLayers do a[i] = Tensor:F32(config.contextLength * kvDim) end return a end)(),
-	latestToken = 0,
-}
+	keyCache = (function()
+		local a = {}
 
+		for i = 1, config.numberOfLayers do
+			a[i] = Tensor:F32(config.contextLength * kvDim)
+		end
+
+		return a
+	end)(),
+	valueCache = (function()
+		local a = {}
+
+		for i = 1, config.numberOfLayers do
+			a[i] = Tensor:F32(config.contextLength * kvDim)
+		end
+
+		return a
+	end)(),
+}
 _G.gc_refs = {
-    state, 
-    weights,
+	state,
+	weights,
 }
 
---collectgarbage("stop")
-
-local token = 0
+local sampler = Sampler:new(config.vocabularySize, 0.1, 0.95)
+local context = [[<|start_header_id|>user<|end_header_id|>
+hello<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+]]
+local tokens = tokenizer.encode(context)
 local pos = 0
-local logits = forward(configuration, weights, state, token, pos)
-print(config.vocabularySize)
+local token = tokenizer.encode("<|begin_of_text|>")[1]
+local next_token
+
+for pos = 1, 30 do
+	forward(configuration, weights, state, token - 1, pos - 1)
+
+	if pos < #tokens then
+		next_token = tokens[pos]
+	else
+		next_token = sampler:SampleToken(state.logits)+1
+	end
+
+	token = next_token
+	print(tokenizer.vocabulary.tokens[token])
+end
