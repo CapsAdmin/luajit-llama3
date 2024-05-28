@@ -99,181 +99,111 @@ local function run_thread(func_ptr, udata)
 	return thread_id[0]
 end
 
-local function multithreading(n_threads, code, udata)
-	local threads = {}
+local function inject_threaded_matmul(Tensor)
+	local struct = [[struct {
+		int start; 
+		int stop; 
+		int dim1; 
+		
+		void *out_blob; 
+		int out_size;
+		int out_type;
 
-	-- run threads
-	for i = 0, n_threads - 1 do
-		threads[i + 1] = run_thread(code, udata)
-	end
+		void *self_blob; 
+		int self_size;
+		int self_type;
 
-	-- wait for all to finish
-	for _, thread_id in ipairs(threads) do
-		check_pthread(pt.pthread_join(thread_id, nil))
-	end
-end
+		void *that_blob;
+		int that_size;
+		int that_type;
+	}]]
+	local structcdata = ffi.typeof(struct)
+	local struct_ptr = ffi.typeof(struct .. "*")
+	local thread_pool = {}
 
-local get_time = require("time")
-local timers = {}
-
-function timer(what)
-	if what then
-		table.insert(timers, 1, {what = what, time = get_time()})
-	else
-		local t = table.remove(timers, 1)
-		print(t.what .. " took " .. (get_time() - t.time) .. " seconds")
-	end
-end
-
-do -- test for MatMul
-	local Tensor = require("tensor")
-	_G.timer("initializing buffers")
-	local size = 50000
-	local t1 = Tensor:F32(size * size)
-	local t2 = Tensor:F32(size * size)
-	local out = Tensor:F32(size)
-
-	for i = 0, (size * size) - 1 do
-		t1:SetFloat(i, i)
-		t2:SetFloat(i, i)
-	end
-
-	_G.timer()
-	_G.timer("single threaded matmul")
-	t1:MatMul(t2, out, size, size)
-	_G.timer()
-	local expected = {}
-
-	for i = 0, size - 1 do
-		expected[i] = out:GetFloat(i)
-	end
-
-	do
-		local struct = [[struct {
-			int start; 
-			int stop; 
-			int dim1; 
-			float *out_blob; 
-			int out_size;
-			float *self_blob; 
-			int self_size;
-			float *that_blob;
-			int that_size;
-		}]]
-		local struct_ptr = ffi.typeof(struct .. "*")
-		_G.timer("initializing lua threads")
-		local thread_pool = {}
-
-		for i = 1, 32 do
-			local func_ptr = load_thread(
-				[==[
+	for i = 1, 32 do
+		local func_ptr = load_thread(
+			[==[
 				local Tensor = require("tensor")
 				local ffi = require("ffi")
 				local udataptr = ffi.typeof([[]==] .. struct .. [==[*]])
 				--require("luajit_options")()
 			]==],
-				[==[
+			[==[
 				local data = udataptr(udata)
-				
+				local function tensor(what)
+					local type = data[what .. "_type"]
+					if type == 0 then
+						return setmetatable({
+							size = data[what .. "_size"], 
+							blob = ffi.cast("float*", data[what .. "_blob"]), 
+							GetFloat = Tensor.GetF32, 
+							SetFloat = Tensor.SetF32
+						}, Tensor)
+					else
+						return setmetatable({
+							size = data[what .. "_size"], 
+							blob = ffi.cast("uint8_t*", data[what .. "_blob"]),
+							blob_f16 = ffi.cast("uint16_t*", data[what .. "_blob"]),
+							GetFloat = Tensor.GetQ4_0, 
+							SetFloat = Tensor.SetQ4_0
+						}, Tensor)
+					end
+				end
+
 				local dim1 = data.dim1
-				local out = setmetatable({size = data.out_size, blob = data.out_blob, GetFloat = Tensor.GetF32, SetFloat = Tensor.SetF32}, Tensor)
-				local self = setmetatable({size = data.self_size, blob = data.self_blob, GetFloat = Tensor.GetF32, SetFloat = Tensor.SetF32}, Tensor)
-				local that = setmetatable({size = data.that_size, blob = data.that_blob, GetFloat = Tensor.GetF32, SetFloat = Tensor.SetF32}, Tensor)
-				local get_time = require("time")
-				local start = get_time()
+				local out = tensor("out")
+				local self = tensor("self")
+				local that = tensor("that")
 
 				for i = data.start, data.stop-1 do
 					out:SetFloat(i, self:Dot(i * dim1, that, 0, dim1))
 				end
-
-				print(data.start .. ">" .. data.stop, "finished in " .. (get_time() - start) .. " seconds")
 			]==]
-			)
-			thread_pool[i] = func_ptr
-		end
+		)
+		thread_pool[i] = func_ptr
+	end
 
-		_G.timer()
+	function Tensor:MatMul(that, out, dim0, dim1)
+		local chunks = dim0 / 32
+		local threads = {}
+		local i = 0
 
-		function Tensor:MatMul2(that, out, dim0, dim1)
-			local chunks = dim0 / 32
-			local threads = {}
-			print("running in ", chunks, "chunks", dim0)
-			local i = 0
+		while i < dim0 do
+			local start = i
+			local stop = i + chunks
+			local func_ptr = assert(table.remove(thread_pool))
+			local thread_id = run_thread(
+				func_ptr,
+				structcdata(
+					{
+						start = start,
+						stop = stop,
+						dim1 = dim1,
 
-			while i < dim0 do
-				local start = i
-				local stop = i + chunks
-				local func_ptr = assert(table.remove(thread_pool))
-				table.insert(
-					threads,
-					run_thread(
-						func_ptr,
-						ffi.new(
-							struct,
-							{
-								start = start,
-								stop = stop,
-								dim1 = dim1,
-								out_blob = out.blob,
-								out_size = out.size,
-								self_blob = self.blob,
-								self_size = self.size,
-								that_blob = that.blob,
-								that_size = that.size,
-							}
-						)
-					)
+						out_blob = out.blob,
+						out_size = out.size,
+						out_type = out.GetFloat == Tensor.GetF32 and 0 or 1,
+
+						self_blob = self.blob,
+						self_size = self.size,
+						self_type = self.GetFloat == Tensor.GetF32 and 0 or 1,
+
+						that_blob = that.blob,
+						that_size = that.size,
+						that_type = that.GetFloat == Tensor.GetF32 and 0 or 1,
+					}
 				)
-				i = i + chunks
-			end
-
-			print("waiting for threads to finish")
-
-			for i, thread_id in ipairs(threads) do
-				check_pthread(pt.pthread_join(thread_id, nil))
-			end
+			)
+			table.insert(threads, thread_id)
+			i = i + chunks
+			table.insert(thread_pool, 1, func_ptr)
 		end
-	end
 
-	local out = Tensor:F32(size)
-	_G.timer("multithreaded threaded matmul")
-	t1:MatMul2(t2, out, size, size)
-	_G.timer()
-
-	for i = 0, size - 1 do
-		if expected[i] ~= out:GetFloat(i) then
-			print(expected[i], out:GetFloat(i))
+		for i, thread_id in ipairs(threads) do
+			check_pthread(pt.pthread_join(thread_id, nil))
 		end
 	end
 end
 
---[[
-   function Tensor:MatMul(that, out, dim0, dim1)
-      for i = 0, dim0 - 1 do
-         out:SetFloat(i, self:Dot(i * dim1, that, 0, dim1))
-      end
-   end
-]] do
-	return
-end
-
-local buffer = ffi.new("float[16]")
-multithreading(
-	16,
-	[[
-         local Tensor = require("tensor")
-         local t2 = Tensor:F32(10)
-         
-         -- test
-         t2.blob = ffi.cast("float *", udata)
-         t2.size = 10
-
-         local buffer = ffi.cast("float *", udata)
-         buffer[4] = 1
-      ]],
-	buffer
-)
-
-for i = 0, 16 - 1 do
-	print(buffer[i])
-end
+return inject_threaded_matmul

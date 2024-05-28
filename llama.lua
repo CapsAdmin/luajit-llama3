@@ -35,6 +35,14 @@ for k, v in ipairs(tokenizer.encode(context)) do
 	--print(k, v, tokenizer.vocabulary.tokens[v])
 end
 
+
+print(
+	pcall(function()
+		local inject_threaded_matmul = require("threads")
+		inject_threaded_matmul(Tensor)
+	end)
+)
+
 local function rmsnorm(out, x, weight, size, rmsNormEps)
 	local ss = x:Reduce(0, size, 0, function(acc, xi) return acc + xi * xi end);
 	ss = ss / size;
@@ -53,7 +61,7 @@ local function forward(c, w, s, token, position)
 	local sqrtHeadSize = math.sqrt(headSize)
 	w.token_embedding_table:CopyTo(token * dim, s.x, 0, dim)
 
-	for l = 1, c.numberOfLayers do
+	for l = 0, c.numberOfLayers-1 do
 		print("layer: ", l, " / ", c.numberOfLayers)
 		rmsnorm(s.xb, s.x, w.rms_att_weight[l], dim, c.rmsNormEps)
 
@@ -76,8 +84,8 @@ local function forward(c, w, s, token, position)
 				vec:SetFloat(i + 1, v0 * fcr + v1 * fci)
 			end
 
-			s.k:CopyTo(0, s.keyCache[l], position * kvDim, kvDim)
-			s.v:CopyTo(0, s.valueCache[l], position * kvDim, kvDim)
+			s.k:CopyTo(0, s.keyCache[l+1], position * kvDim, kvDim)
+			s.v:CopyTo(0, s.valueCache[l+1], position * kvDim, kvDim)
 			local curLayer = l
 
 			for h = 0, c.numberOfHeads-1 do
@@ -155,3 +163,4 @@ _G.gc_refs = {
 local token = 0
 local pos = 0
 local logits = forward(configuration, weights, state, token, pos)
+print(config.vocabularySize)
