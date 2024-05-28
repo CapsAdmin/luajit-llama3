@@ -1,6 +1,9 @@
 local ffi = require("ffi")
 local Tensor = {}
 Tensor.__index = Tensor
+ffi.cdef[[
+	void *malloc( size_t size );
+]]
 
 local function valid_number(num, self, i)
 	if num and num ~= inf and num ~= ninf and (num >= 0 or num <= 0) then
@@ -50,11 +53,14 @@ do
 		self.blob[index] = val
 	end
 
+	Tensor.GetF32 = get_float
+	Tensor.SetF32 = set_float
+
 	function Tensor:F32(size, blob)
 		local blob_ref = blob
 
 		if not blob then
-			blob = ffi.new("float[?]", size)
+			blob = ffi.cast("float*", ffi.C.malloc(size * 4))
 			blob_ref = blob
 		end
 
@@ -97,11 +103,14 @@ do
 		error("NYI", 2)
 	end
 
+	Tensor.GetQ4_0 = get_float
+	Tensor.SetQ4_0 = set_float
+
 	function Tensor:Q4_0(size, blob)
 		local blob_ref = blob
 
 		if not blob then
-			blob = ffi.new("uint8_t[?]", size)
+			blob = ffi.cast("uint8_t*", ffi.C.malloc(size))
 			blob_ref = blob
 		end
 
