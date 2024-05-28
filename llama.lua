@@ -47,12 +47,14 @@ local function forward(c, w, s, token, position)
 	local sqrtHeadSize = math.sqrt(headSize)
 	w.token_embedding_table:CopyTo(token * dim, s.x, 0, dim)
 
-	for l = 1, c.numberOfLayers do
+	for l = 1, 4 or c.numberOfLayers do
 		print("layer: ", l, " / ", c.numberOfLayers)
 		rmsnorm(s.xb, s.x, w.rms_att_weight[l], dim, c.rmsNormEps)
+
 		w.wq[l]:MatMul(s.xb, s.q, dim, dim)
 		w.wk[l]:MatMul(s.xb, s.k, kvDim, dim)
 		w.wv[l]:MatMul(s.xb, s.v, kvDim, dim)
+
 
 		for i = 0, dim - 1, 2 do
 			local head_dim = i % headSize

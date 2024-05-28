@@ -1,7 +1,4 @@
 {
-  "triggerTaskOnSave.tasks": {
-    "onsave": ["**/*.lua", "**/*.nlua"]
-  },
   "files.associations": {
     "*.lua": "lua"
   },
