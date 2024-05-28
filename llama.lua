@@ -1,3 +1,4 @@
+local model_path = ...
 require("luajit_options")()
 
 do
@@ -19,7 +20,7 @@ local Tokenizer = require("tokenizer")
 local Configuration = require("configuration")
 local Weights = require("weights")
 local Tensor = require("tensor")
-local gguf = ggf.load_gguf("/home/caps/projects/llama3.java/Meta-Llama-3-8B-Instruct-Q4_0.gguf")
+local gguf = ggf.load_gguf(model_path)
 local Sampler = require("topp_sampler")
 assert(gguf.metadata["tokenizer.ggml.model"] == "gpt2")
 assert(gguf.metadata["tokenizer.ggml.tokens"])
