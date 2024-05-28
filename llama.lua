@@ -1,3 +1,17 @@
+require("luajit_options")()
+
+do
+	local timers = {}
+	function timer(what)
+		if what then
+			table.insert(timers, 1, {what = what, time = os.clock()})
+		else
+			local t = table.remove(timers, 1)
+			print(t.what .. " took " .. (os.clock() - t.time) .. " seconds")
+		end
+	end
+end
+
 local ffi = require("ffi")
 local ggf = require("gguf")
 local Tokenizer = require("tokenizer")
@@ -9,7 +23,7 @@ local gguf = ggf.load_gguf("/home/caps/projects/llama3.java/Meta-Llama-3-8B-Inst
 assert(gguf.metadata["tokenizer.ggml.model"] == "gpt2")
 assert(gguf.metadata["tokenizer.ggml.tokens"])
 assert(gguf.metadata["tokenizer.ggml.merges"])
-local tokenizer = Tokenizer(gguf.metadata["tokenizer.ggml.tokens"], gguf.metadata["tokenizer.ggml.merges"])
+local tokenizer = Tokenizer(gguf.metadata["tokenizer.ggml.tokens"], gguf.metadata["tokenizer.ggml.merges"]) 
 local configuration = Configuration(1000, gguf.metadata, tokenizer.vocabulary.size())
 local weights = Weights(gguf.tensors, configuration.numberOfLayers)
 local sampler = Sampler(tokenizer.vocabulary.size(), 0, 0.95, 1337)
@@ -26,7 +40,7 @@ local function rmsnorm(out, x, weight, size, rmsNormEps)
 	ss = ss / size;
 	ss = ss + rmsNormEps;
 	ss = 1.0 / math.sqrt(ss)
-	out:MapWithIndexInPlace(0, size, function(value, index) 
+	out:MapInPlace(0, size, function(value, index) 
 		return weight:GetFloat(index) * (ss * x:GetFloat(index)) 
 	end)
 end
@@ -39,7 +53,7 @@ local function forward(c, w, s, token, position)
 	local sqrtHeadSize = math.sqrt(headSize)
 	w.token_embedding_table:CopyTo(token * dim, s.x, 0, dim)
 
-	for l = 1, 4 or c.numberOfLayers do
+	for l = 1, c.numberOfLayers do
 		print("layer: ", l, " / ", c.numberOfLayers)
 		rmsnorm(s.xb, s.x, w.rms_att_weight[l], dim, c.rmsNormEps)
 

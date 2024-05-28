@@ -2,7 +2,7 @@ local ffi = require("ffi")
 ffi.cdef[[
 	typedef struct FILE FILE;
 	size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream);
-	int fseek( FILE* stream, long offset, int origin );
+	void *malloc( size_t size );
 ]]
 local GGMLType, GGMLTypeMap = (
 	function()
@@ -163,6 +163,7 @@ local reader, read_value = (
 )()
 
 local function load_gguf(path)
+	_G.timer("reading gguf metadata")
 	local file = assert(io.open(path, "r"))
 	assert(file:read(4) == "GGUF", "not a gguf file")
 
@@ -223,28 +224,31 @@ local function load_gguf(path)
 		}
 	end
 
+	_G.timer()
+	
 	local alignment = metadata["general.alignment"] or 32
 	local padding = alignment - (file:seek() % alignment)
 	local pos = file:seek() + padding
+	local remaining = file:seek("end")
+	file:seek("set", pos)
+	local remaining_size = remaining-pos
+	
+	local mega_buffer
+	_G.timer("reading gguf tensors")
+	local mega_buffer = ffi.cast("uint8_t *", ffi.C.malloc(remaining_size))
+	if ffi.C.fread(mega_buffer, 1, remaining_size, file) ~= remaining_size then
+		file:close()
+		error("Failed to read the tensor")
+	end
+	_G.timer()
 
 	for i, tensor in ipairs(tensors) do
-		file:seek("set", pos + tonumber(tensor.offset))
+		tensor.blob = mega_buffer + tensor.offset
 
-		local remaining_size = tensor.byte_size
-		local buffer = ffi.new("uint8_t[?]", remaining_size)
-		local bytes_read = ffi.C.fread(buffer, 1, remaining_size, file)
-
-		if bytes_read ~= remaining_size then
-			file:close()
-			error("Failed to read the tensor")
-		end
-
+		-- random sanity check
 		if tensor.name == "blk.0.attn_norm.weight" then
-			local test = ffi.cast("float*", buffer)
-			assert(test[585] == 0.5625)
+			assert(ffi.cast("float*", tensor.blob)[585] == 0.5625)
 		end
-
-		tensor.blob = buffer
 	end
 
 	local tensor_map = {}
@@ -253,6 +257,7 @@ local function load_gguf(path)
 		tensor_map[v.name] = v
 		v.index = i
 	end
+
 
 	return {
 		metadata = metadata,

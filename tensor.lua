@@ -115,20 +115,14 @@ function Tensor:GetFloatVector(index, value)
 	error("NYI")
 end
 
-function Tensor:ScalarDot(thisOffset, that, thatOffset, size)
+function Tensor:Dot(thisOffset, that, thatOffset, size)
 	local result = 0
 
 	for j = 0, size - 1 do
-		local a = self:GetFloat(thisOffset + j)
-		local b = that:GetFloat(thatOffset + j)
-		result = result + a * b
+		result = result + self:GetFloat(thisOffset + j) * that:GetFloat(thatOffset + j)
 	end
 
 	return result
-end
-
-function Tensor:Dot(thisOffset, that, thatOffset, size)
-	return self.ScalarDot(self, thisOffset, that, thatOffset, size)
 end
 
 function Tensor:MatMul(that, out, dim0, dim1)
@@ -137,31 +131,33 @@ function Tensor:MatMul(that, out, dim0, dim1)
 	end
 end
 
-function Tensor:Reduce(thisOffset, size, seed, reduce_callback)
-	local result = seed
-
-	for i = 0, size - 1 do
-		result = reduce_callback(result, self:GetFloat(thisOffset + i))
-	end
-
-	return result
-end
-
 do
-	local function F(r, f)
-		return r + f
+	function Tensor:Reduce(thisOffset, size, seed, reduce_callback)
+		local result = seed
+
+		for i = 0, size - 1 do
+			result = reduce_callback(result, self:GetFloat(thisOffset + i))
+		end
+
+		return result
 	end
 
-	function Tensor:Sum(thisOffset, size)
-		return self:Reduce(thisOffset, size, 0, F)
+	do
+		local function F(r, f)
+			return r + f
+		end
+
+		function Tensor:Sum(thisOffset, size)
+			return self:Reduce(thisOffset, size, 0, F)
+		end
 	end
-end
 
-do
-	local max = math.max
+	do
+		local max = math.max
 
-	function Tensor:Max(thisOffset, size)
-		return self:Reduce(thisOffset, size, 0, max)
+		function Tensor:Max(thisOffset, size)
+			return self:Reduce(thisOffset, size, 0, max)
+		end
 	end
 end
 
@@ -171,94 +167,86 @@ do
 	end
 
 	function Tensor:CopyTo(thisOffset, that, thatOffset, size)
-		return that:MapWithIndexInPlace(thatOffset, size, F, self, thatOffset, thisOffset)
-	end
-end
-
-function Tensor:MapInPlace(thisOffset, size, F, ...)
-	local endIndex = thisOffset + size
-
-	for i = thisOffset, endIndex - 1 do
-		self:SetFloat(i, F(self:GetFloat(i), ...))
-	end
-
-	return self
-end
-
-do
-	local function F(f, value)
-		return f / value
-	end
-
-	function Tensor:DivideInPlace(thisOffset, size, value)
-		return self:MapInPlace(thisOffset, size, F, value)
+		return that:MapInPlace(thatOffset, size, F, self, thatOffset, thisOffset)
 	end
 end
 
 do
-	local function F(value, index, that, thisOffset, thatOffset)
-		return value + that:GetFloat(index - thisOffset + thatOffset)
+	function Tensor:MapInPlace(thisOffset, size, F, a, b, c, d)
+		local endOffset = thisOffset + size
+
+		for i = thisOffset, endOffset - 1 do
+			self:SetFloat(i, F(self:GetFloat(i), i, a, b, c, d))
+		end
+
+		return self
 	end
 
-	function Tensor:AddTensorInPlaceOffset(thisOffset, that, thatOffset, size)
-		return self:MapWithIndexInPlace(thisOffset, size, F, that, thisOffset, thatOffset)
-	end
-end
+	do
+		local function F(value, index, div)
+			return value / div
+		end
 
-function Tensor:AddTensorInPlace(that)
-	return self:AddTensorInPlaceOffset(0, that, 0, self.size)
-end
-
-do
-	local function F(value, index, that, thisOffset, thatOffset)
-		return value * that:GetFloat(index - thisOffset + thatOffset)
+		function Tensor:DivideInPlace(thisOffset, size, value)
+			return self:MapInPlace(thisOffset, size, F, value)
+		end
 	end
 
-	function Tensor:MultiplyTensorInPlaceOffset(thisOffset, that, thatOffset, size)
-		return self:MapWithIndexInPlace(thisOffset, size, F, that, thisOffset, thatOffset)
-	end
-end
+	do
+		local function F(value, index, that, thisOffset, thatOffset)
+			return value + that:GetFloat(index - thisOffset + thatOffset)
+		end
 
-function Tensor:MultiplyTensorInPlace(that)
-	return self:MultiplyTensorInPlaceOffset(0, that, 0, self.size)
-end
-
-do
-	local function F(f, value)
-		return value
+		function Tensor:AddTensorInPlaceOffset(thisOffset, that, thatOffset, size)
+			return self:MapInPlace(thisOffset, size, F, that, thisOffset, thatOffset)
+		end
 	end
 
-	function Tensor:FillInPlace(thisOffset, size, value)
-		return self:MapInPlace(thisOffset, size, F, value)
+	function Tensor:AddTensorInPlace(that)
+		return self:AddTensorInPlaceOffset(0, that, 0, self.size)
+	end
+
+	do
+		local function F(value, index, that, thisOffset, thatOffset)
+			return value * that:GetFloat(index - thisOffset + thatOffset)
+		end
+
+		function Tensor:MultiplyTensorInPlaceOffset(thisOffset, that, thatOffset, size)
+			return self:MapInPlace(thisOffset, size, F, that, thisOffset, thatOffset)
+		end
+	end
+
+	function Tensor:MultiplyTensorInPlace(that)
+		return self:MultiplyTensorInPlaceOffset(0, that, 0, self.size)
+	end
+
+	do
+		local function F(value, index, identity)
+			return identity
+		end
+
+		function Tensor:FillInPlace(thisOffset, size, identity)
+			return self:MapInPlace(thisOffset, size, F, identity)
+		end
+	end
+
+	do
+		local exp = math.exp
+
+		local function F(num, index, max_value)
+			return exp(num - max_value)
+		end
+
+		function Tensor:SoftMaxInPlace(thisOffset, size)
+			self:MapInPlace(thisOffset, size, F, self:Max(thisOffset, size))
+			return self:DivideInPlace(thisOffset, size, self:Sum(thisOffset, size))
+		end
 	end
 end
 
 function Tensor:SaxyInPlace(thisOffset, that, thatOffset, size, a)
 	for i = 0, size - 1 do
 		self:SetFloat(thisOffset + i, a * that:GetFloat(thatOffset + i) + this:GetFloat(thisOffset + i))
-	end
-
-	return self
-end
-
-do
-	local exp = math.exp
-
-	local function F(num, maxVal)
-		return exp(num - maxVal)
-	end
-
-	function Tensor:SoftMaxInPlace(thisOffset, size)
-		self:MapInPlace(thisOffset, size, F, self:Max(thisOffset, size))
-		return self:DivideInPlace(thisOffset, size, self:Sum(thisOffset, size))
-	end
-end
-
-function Tensor:MapWithIndexInPlace(thisOffset, size, F, ...)
-	local endOffset = thisOffset + size
-
-	for i = thisOffset, endOffset - 1 do
-		self:SetFloat(i, F(self:GetFloat(i), i, ...))
 	end
 
 	return self
@@ -313,6 +301,35 @@ do -- some tests
 		end
 
 		assert(expected_dot_product == dot_product)
+	end
+
+	do -- test for MatMul
+		local size = 3
+		local t1 = Tensor:F32(size * size)
+		local t2 = Tensor:F32(size * size)
+		local out = Tensor:F32(size)
+		t1:SetFloat(0, 1)
+		t1:SetFloat(1, 2)
+		t1:SetFloat(2, 3)
+		t1:SetFloat(3, 4)
+		t1:SetFloat(4, 5)
+		t1:SetFloat(5, 6)
+		t1:SetFloat(6, 7)
+		t1:SetFloat(7, 8)
+		t1:SetFloat(8, 9)
+		t2:SetFloat(0, 1)
+		t2:SetFloat(1, 0)
+		t2:SetFloat(2, 0)
+		t2:SetFloat(3, 0)
+		t2:SetFloat(4, 1)
+		t2:SetFloat(5, 0)
+		t2:SetFloat(6, 0)
+		t2:SetFloat(7, 0)
+		t2:SetFloat(8, 1)
+		t1:MatMul(t2, out, size, size)
+		assert(out:GetFloat(0) == 1)
+		assert(out:GetFloat(1) == 4)
+		assert(out:GetFloat(2) == 7)
 	end
 end
 

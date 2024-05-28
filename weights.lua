@@ -4,7 +4,6 @@ local ffi = require("ffi")
 local function loadTensor(entry, name)
 	if Tensor[entry.type_info.name] then
 		local t = Tensor[entry.type_info.name](Tensor, entry.size, entry.blob):SetName(name .. "[" .. entry.type_info.name .. "]")
-		print("loaded " .. tostring(t))
 
 		if name == "token_embd.weight" then
 			local test = {
