@@ -43,14 +43,10 @@ local ggf = require("gguf")
 
 do
 	local function get_float(self, index)
-		assert(index >= 0)
-		assert(index < self.size)
 		return self.blob[index]
 	end
 
 	local function set_float(self, index, val)
-		assert(index >= 0)
-		assert(index < self.size)
 		self.blob[index] = val
 	end
 
@@ -68,57 +64,31 @@ end
 
 do
 	local block_size = ggf.GGMLTypeMap.Q4_0.blockSize
+	local half_block_size = block_size / 2
 	local type_size = ggf.GGMLTypeMap.Q4_0.typeSize
-	local FLOAT16 = 2
 	local rshift = bit.rshift
 	local band = bit.band
 	local ldexp = math.ldexp
-	local INF = math.huge
-	local NAN = math.huge / math.huge
 	local floor = math.floor
 
+	-- f16_to_f32 is not accurate because we don't need to handle nan, inf, etc
 	local function f16_to_f32(bits)
-		local sign = bit.band(bit.rshift(bits, 15), 0x1)
-		local exponent = bit.band(bit.rshift(bits, 10), 0x1F)
-		local mantissa = bit.band(bits, 0x3FF)
-		sign = sign == 1 and -1 or 1
-
-		if exponent == 0 then
-			if mantissa == 0 then
-				return sign * 0.0
-			else
-				-- Subnormal number
-				return sign * ldexp(mantissa, -24)
-			end
-		elseif exponent == 31 then
-			if mantissa == 0 then
-				return sign * math.huge
-			else
-				return sign * (math.huge - math.huge) -- NaN
-			end
-		else
-			return sign * ldexp(mantissa + 1024, exponent - 25)
-		end
+		local sign = 1 - band(rshift(bits, 15), 0x1) * 2
+		local exponent = band(rshift(bits, 10), 0x1F)
+		local mantissa = band(bits, 0x3FF)
+		return sign * ldexp(mantissa + 1024, exponent - 25)
 	end
 
 	local function get_float(self, index)
-		assert(index >= 0)
-		assert(index < self.size)
 		local block_index = floor(index / block_size)
 		local block_offset = floor(block_index * type_size)
 		local scale = f16_to_f32(self.blob_f16[block_offset / 2])
-		local quant
-		local modIndex = index % block_size
-
-		if modIndex < block_size / 2 then
-			quant = band(self.blob[block_offset + 2 + modIndex], 0x0F)
-		else
-			quant = band(rshift(self.blob[block_offset + 2 + modIndex - block_size / 2], 4), 0x0F)
-		end
-
-		quant = quant - 8
-		quant = quant * scale
-		return quant
+		-- Calculate the shift amount using bitwise operations to avoid branches
+		local modIndex = band(index, block_size - 1)
+		local base_offset = block_offset + 2 + band(modIndex, half_block_size - 1)
+		local shift_amount = rshift(modIndex, 4) * 4
+		local quant = band(rshift(self.blob[base_offset], shift_amount), 0x0F)
+		return (quant - 8) * scale
 	end
 
 	local function set_float(self, index, value)

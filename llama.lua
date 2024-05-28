@@ -1,11 +1,3 @@
-local test = io.open("debug.txt", "w")
-function START_DEBUG()
-    debug.sethook(function(event, line)
-        local s = debug.getinfo(2).short_src
-        test:write(s .. ":" .. line .. "\n")
-    end, "l")
-end
-
 local ffi = require("ffi")
 local ggf = require("gguf")
 local Tokenizer = require("tokenizer")
