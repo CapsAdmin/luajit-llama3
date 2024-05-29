@@ -145,37 +145,15 @@ do
 
 	function Tensor.EnableThreadedMatMul()
 		local ok, err = pcall(function()
-			local build_threaded_for = require("threads")
-			local parallel_for = build_threaded_for(
-				[[
-					double dim1; 
-					void *out; 
-					void *self;
-					void *that;
-				]],
-				[[
-					local dim1 = data.dim1
-					local Tensor = require("tensor")
-					local out = Tensor:ThreadDeserialize(data.out)
-					local self = Tensor:ThreadDeserialize(data.self)
-					local that = Tensor:ThreadDeserialize(data.that)
 
-					for i = start, stop - 1 do
-						out:SetFloat(i, self:Dot(i * dim1, that, 0, dim1))
-					end
-				]],
-				32
-			)
-
-			local function build_cdata(data, dim1, out, self, that)
-				table.insert(data, dim1)
-				table.insert(data, out:ThreadSerialize())
-				table.insert(data, self:ThreadSerialize())
-				table.insert(data, that:ThreadSerialize())
-			end
+			local build_parallel_for = require("threads")
+			local parallel_for = build_parallel_for(function(dim1, out, self, that, thread_data)
+				local i = thread_data
+				out:SetFloat(i, self:Dot(i * dim1, that, 0, dim1))
+			end, {"double", "@tensor", "@tensor", "@tensor"}, 32)
 
 			function Tensor:MatMul(that, out, dim0, dim1)
-				parallel_for(dim0, build_cdata, dim1, out, self, that)
+				parallel_for(dim0, dim1, out, self, that)
 			end
 		end)
 

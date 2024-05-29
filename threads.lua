@@ -133,7 +133,7 @@ local function threaded_for(encode_code, lua_code, thread_count)
 		func_pool[i] = func_ptr
 	end
 
-	return function(iterations, encode_callback, ...)
+	return function(iterations, encode_callback, a,b,c,d,e,f,g,h,i,j,k,l,m,n)
 		local chunks = iterations / thread_count
 		local threads = {}
 		local i = 0
@@ -147,7 +147,7 @@ local function threaded_for(encode_code, lua_code, thread_count)
 				i,
 				i + chunks,
 			}
-			encode_callback(tbl, ...)
+			encode_callback(tbl, a,b,c,d,e,f,g,h,i,j,k,l,m,n)
 			table_insert(
 				threads,
 				{
@@ -165,4 +165,82 @@ local function threaded_for(encode_code, lua_code, thread_count)
 	end
 end
 
-return threaded_for
+local function threaded_for2(callback, ctypes, thread_count)
+	local bcode = string.dump(callback)
+	local upvalues = {}
+
+	for i = 1, math.huge do
+		local name = debug.getlocal(callback, i)
+
+		if not name or name == "thread_data" then break end
+
+		upvalues[i] = name
+	end
+
+	assert(#upvalues == #ctypes)
+	local struct_code = ""
+	local unpack_code = ""
+	local encode_code = "local ffi = require('ffi')\n"
+
+	for i = 1, #upvalues do
+		local name = upvalues[i]
+		local type = ctypes[i]
+
+		if type == "@tensor" then
+			struct_code = struct_code .. "void * " .. name .. ";\n"
+			unpack_code = unpack_code .. "local " .. name .. " = Tensor:ThreadDeserialize(data." .. name .. ")\n"
+			encode_code = encode_code .. "table.insert(data, "..name..":ThreadSerialize())\n"
+		elseif type == "@string" then
+			struct_code = struct_code .. "uint8_t * " .. name .. ";\n"
+			struct_code = struct_code .. "uint32_t " .. name .. "_len;\n"
+			
+			unpack_code = unpack_code .. "local " .. name .. " = ffi.string(data." .. name .. ", data." .. name .. "_len)\n"
+
+			encode_code = encode_code .. "table.insert(data, ffi.cast('uint8_t*', "..name.."))\n"
+			encode_code = encode_code .. "table.insert(data, #"..name..")\n"
+		else
+			struct_code = struct_code .. type .. " " .. name .. ";\n"
+			unpack_code = unpack_code .. "local " .. name .. " = data." .. name .. "\n"
+			encode_code = encode_code .. "table.insert(data, "..name..")\n"
+		end
+	end
+
+	local parallel_for = threaded_for(
+		struct_code..[[
+			uint8_t *lua_bcode;
+			uint32_t lua_bcode_len;
+		]],
+		[[ 
+
+			local ffi = require("ffi")
+			local Tensor = require("tensor")
+
+		]]..unpack_code .. [[
+			local callback = loadstring(ffi.string(data.lua_bcode, data.lua_bcode_len))
+			for h = start, stop - 1 do
+				callback(]] .. table.concat(upvalues, ", ") .. [[, h)
+			end
+		]],
+		thread_count
+	)
+
+	local build_cdata = loadstring([[
+		local bcode = ...
+		return function(data, ]]..table.concat(upvalues, ", ")..[[)
+			]]..encode_code..[[
+			
+			table.insert(data, ffi.cast("uint8_t *", bcode))
+			table.insert(data, #bcode)
+		end
+	]])(bcode)
+
+	return function(max, ...)
+		parallel_for(max, build_cdata, ...)
+	end
+end
+
+
+--local f = threaded_for2(function(a, b, thread_data) print(a, b) end, {"double", "double"}, 2)
+--f(10, 1, 2)
+
+return threaded_for2

@@ -69,11 +69,8 @@ local function load_and_run(model_path, prompt, token_callback)
 		end)(),
 	}
 
-	local function exp(value)
-		return value / (1.0 + math.exp(-value))
-	end
-
-	local function attention_step(h, xb, att, q, keyCache, valueCache, l,  position, kvMul, kvDim, headSize, contextLength, sqrtHeadSize)
+	local function attention_step(xb, att, q, keyCache, valueCache, l,  position, kvMul, kvDim, headSize, contextLength, sqrtHeadSize, thread_data)
+		local h = thread_data
 		local qOffset = h * headSize
 		local attOffset = h * contextLength
 
@@ -97,81 +94,28 @@ local function load_and_run(model_path, prompt, token_callback)
 
 	local function attention(numberOfHeads, xb, att, q, keyCache, valueCache, l,  position, kvMul, kvDim, headSize, contextLength, sqrtHeadSize)
 		for h = 0, numberOfHeads - 1 do
-			attention_step(h, xb, att, q, keyCache, valueCache, l,  position, kvMul, kvDim, headSize, contextLength, sqrtHeadSize)
+			attention_step(xb, att, q, keyCache, valueCache, l,  position, kvMul, kvDim, headSize, contextLength, sqrtHeadSize, h)
 		end
 	end
-	local ffi = require("ffi")
+	
 	local ok, err = pcall(function() 
+		local ffi = require("ffi")
 		local threaded_for = require("threads")
-		local bcode = string.dump(attention_step)
 
-		local parallel_for = threaded_for([[
-			void *xb; 
-			void *att;
-			void *q;
-			void *keyCache;
-			void *valueCache;
-			
-			double l;
-			double position;
-			double kvMul;
-			double kvDim;
-			double headSize; 
-			double contextLength;
-			double sqrtHeadSize;
-
-			uint8_t *bcode;
-			uint32_t bcode_len;
-		]], [[
-
-			local l = data.l
-			local position = data.position
-			local kvMul = data.kvMul
-			local kvDim = data.kvDim
-			local headSize = data.headSize
-			local contextLength = data.contextLength
-			local sqrtHeadSize = data.sqrtHeadSize	
-
-			local Tensor = require("tensor")
-			local xb = Tensor:ThreadDeserialize(data.xb)
-			local att = Tensor:ThreadDeserialize(data.att)
-			local q = Tensor:ThreadDeserialize(data.q)
-			local keyCache = Tensor:ThreadDeserialize(data.keyCache)
-			local valueCache = Tensor:ThreadDeserialize(data.valueCache)
-
-			local bcode = ffi.string(data.bcode, data.bcode_len)
-			local attention_step = loadstring(bcode)
-
-			for h = start, stop - 1 do
-				attention_step(h, xb, att, q, keyCache, valueCache, l,  position, kvMul, kvDim, headSize, contextLength, sqrtHeadSize)
-			end
-		]], 8)
-
-		local function build_cdata(data, xb, att, q, keyCache, valueCache, l, position, kvMul, kvDim, headSize, contextLength, sqrtHeadSize)
-			table.insert(data, xb:ThreadSerialize()) 
-			table.insert(data, att:ThreadSerialize()) 
-			table.insert(data, q:ThreadSerialize()) 
-			table.insert(data, keyCache:ThreadSerialize()) 
-			table.insert(data, valueCache:ThreadSerialize()) 
-
-			table.insert(data, l )
-			table.insert(data, position )
-			table.insert(data, kvMul )
-			table.insert(data, kvDim )
-			table.insert(data, headSize )
-			table.insert(data, contextLength )
-			table.insert(data, sqrtHeadSize)
-			
-			table.insert(data, ffi.cast("uint8_t*", bcode))
-			table.insert(data, #bcode)
-		end
+		local run = threaded_for(attention_step, {
+			"@tensor", "@tensor", "@tensor", "@tensor", "@tensor",
+			"double", "double", "double", "double", "double", "double",
+			"double",
+		},32)
 
 		attention = function(numberOfHeads, ...)
-			parallel_for(numberOfHeads, build_cdata, ...)
+			run(numberOfHeads, ...)
 		end
 	end)
 
-	print(ok, err)
+	local function exp(value)
+		return value / (1.0 + math.exp(-value))
+	end
 
 	local function forward(c, w, s, token, position)
 		local dim = c.dim
