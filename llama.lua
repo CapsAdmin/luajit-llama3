@@ -18,14 +18,15 @@ local Tokenizer = require("tokenizer")
 local Configuration = require("configuration")
 local Weights = require("weights")
 local Tensor = require("tensor")
-Tensor:EnableThreading()
 local Sampler = require("topp_sampler")
+
+Tensor:EnableThreadedMatMul()
 
 local function load_and_run(model_path, prompt, token_callback)
 	local context_length = 8192
 	local temperature = 0.1
 	local topp = 0.95
-	local max_tokens = 4
+	local max_tokens = 20
 	local gguf = ggf.load_gguf(model_path)
 	assert(gguf.metadata["tokenizer.ggml.model"] == "gpt2")
 	assert(gguf.metadata["tokenizer.ggml.tokens"])
@@ -98,15 +99,15 @@ local function load_and_run(model_path, prompt, token_callback)
 
 			s.k:CopyTo(0, s.keyCache[l + 1], position * kvDim, kvDim)
 			s.v:CopyTo(0, s.valueCache[l + 1], position * kvDim, kvDim)
-			local curLayer = l
 
+			
 			for h = 0, c.numberOfHeads - 1 do
 				local qOffset = h * headSize
 				local attOffset = h * c.contextLength
 
 				for t = 0, position do
 					local keyCacheOffset = t * kvDim + math.floor(h / kvMul) * headSize
-					local score = s.q:Dot(qOffset, s.keyCache[curLayer + 1], keyCacheOffset, headSize)
+					local score = s.q:Dot(qOffset, s.keyCache[l + 1], keyCacheOffset, headSize)
 					score = score / sqrtHeadSize
 					s.att:SetFloat(attOffset + t, score)
 				end
@@ -118,7 +119,7 @@ local function load_and_run(model_path, prompt, token_callback)
 				for t = 0, position do
 					local vOffset = t * kvDim + math.floor(h / kvMul) * headSize
 					local a = s.att:GetFloat(attOffset + t)
-					s.xb:SaxyInPlace(xbOffset, s.valueCache[curLayer + 1], vOffset, headSize, a)
+					s.xb:SaxyInPlace(xbOffset, s.valueCache[l + 1], vOffset, headSize, a)
 				end
 			end
 

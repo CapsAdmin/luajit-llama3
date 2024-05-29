@@ -99,66 +99,48 @@ local function run_thread(func_ptr, udata)
 	return thread_id[0]
 end
 
-local function inject_threaded_matmul(Tensor)
+local function threaded_for(encode_code, lua_code, thread_count)
 	local struct = [[struct {
-		int start; 
-		int stop; 
-		int dim1; 
-		
-		void *out; 
-		void *self;
-		void *that;
+		int start;
+		int stop;
+		]] .. encode_code .. [[
 	}]]
 	local structcdata = ffi.typeof(struct)
 	local struct_ptr = ffi.typeof(struct .. "*")
 	local thread_pool = {}
 
-	for i = 1, 32 do
+	for i = 1, thread_count do
 		local func_ptr = load_thread(
 			[==[
-				local Tensor = require("tensor")
 				local ffi = require("ffi")
 				local udataptr = ffi.typeof([[]==] .. struct .. [==[*]])
 			]==],
 			[==[
 				local data = udataptr(udata)
-				
-				local dim1 = data.dim1
-				local out = Tensor:ThreadDeserialize(data.out)
-				local self = Tensor:ThreadDeserialize(data.self)
-				local that = Tensor:ThreadDeserialize(data.that)
+				local start = data.start
+				local stop = data.stop
 
-				for i = data.start, data.stop-1 do
-					out:SetFloat(i, self:Dot(i * dim1, that, 0, dim1))
-				end
+				]==] .. lua_code .. [==[
 			]==]
 		)
 		thread_pool[i] = func_ptr
 	end
 
-	function Tensor:MatMul(that, out, dim0, dim1)
-		local chunks = dim0 / 32
+	return function(iterations, encode_callback)
+		local chunks = iterations / thread_count
 		local threads = {}
 		local i = 0
 
-		while i < dim0 do
+		while i < iterations do
 			local start = i
 			local stop = i + chunks
 			local func_ptr = assert(table.remove(thread_pool))
-			local thread_id = run_thread(
-				func_ptr,
-				structcdata(
-					{
-						start = start,
-						stop = stop,
-						dim1 = dim1,
-
-						out = out:ThreadSerialize(),
-						self = self:ThreadSerialize(),
-						that = that:ThreadSerialize(),
-					}
-				)
-			)
+			local tbl = {
+				start = start,
+				stop = stop,
+			}
+			encode_callback(tbl)
+			local thread_id = run_thread(func_ptr, structcdata(tbl))
 			table.insert(threads, thread_id)
 			i = i + chunks
 			table.insert(thread_pool, 1, func_ptr)
@@ -170,4 +152,4 @@ local function inject_threaded_matmul(Tensor)
 	end
 end
 
-return inject_threaded_matmul
+return threaded_for

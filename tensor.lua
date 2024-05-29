@@ -61,7 +61,7 @@ do
 
 		if not blob then
 			blob = ffi.cast("float*", ffi.C.malloc(size * 4))
-			ffi.fill(blob, size*4, 0)
+			ffi.fill(blob, size * 4, 0)
 			blob_ref = blob
 		end
 
@@ -136,9 +136,48 @@ function Tensor:Dot(thisOffset, that, thatOffset, size)
 	return result
 end
 
-function Tensor:MatMul(that, out, dim0, dim1)
-	for i = 0, dim0 - 1 do
-		out:SetFloat(i, self:Dot(i * dim1, that, 0, dim1))
+do
+	function Tensor:MatMul(that, out, dim0, dim1)
+		for i = 0, dim0 - 1 do
+			out:SetFloat(i, self:Dot(i * dim1, that, 0, dim1))
+		end
+	end
+
+	function Tensor.EnableThreadedMatMul()
+		local ok, err = pcall(function()
+			local build_threaded_for = require("threads")
+			local parallel_for = build_threaded_for(
+				[[
+					int dim1; 
+					void *out; 
+					void *self;
+					void *that;
+				]],
+				[[
+					local dim1 = data.dim1
+					local Tensor = require("tensor")
+					local out = Tensor:ThreadDeserialize(data.out)
+					local self = Tensor:ThreadDeserialize(data.self)
+					local that = Tensor:ThreadDeserialize(data.that)
+
+					for i = start, stop - 1 do
+						out:SetFloat(i, self:Dot(i * dim1, that, 0, dim1))
+					end
+				]],
+				16
+			)
+
+			function Tensor:MatMul(that, out, dim0, dim1)
+				parallel_for(dim0, function(data)
+					data.dim1 = dim1
+					data.out = out:ThreadSerialize()
+					data.self = self:ThreadSerialize()
+					data.that = that:ThreadSerialize()
+				end)
+			end
+		end)
+
+		if not ok then print("threading can't be enabled: " .. err) end
 	end
 end
 
@@ -365,49 +404,44 @@ do
 			void *blob; 
 		}
 	]])
-
 	local ctype_ptr = ffi.typeof("$*", ctype)
 
 	function Tensor:ThreadSerialize()
-		return ctype({
-			size = self.size,
-			type = self.GetFloat == Tensor.GetF32 and 0 or 1,
-			blob = self.blob,
-		})
+		return ctype(
+			{
+				size = self.size,
+				type = self.GetFloat == Tensor.GetF32 and 0 or 1,
+				blob = self.blob,
+			}
+		)
 	end
 
 	function Tensor:ThreadDeserialize(ptr)
 		local data = ffi.cast(ctype_ptr, ptr)
 
 		if data.type == 0 then
-			return setmetatable({
-				size = data.size, 
-				blob = ffi.cast("float*", data.blob), 
-				GetFloat = Tensor.GetF32, 
-				SetFloat = Tensor.SetF32
-			}, Tensor)
+			return setmetatable(
+				{
+					size = data.size,
+					blob = ffi.cast("float*", data.blob),
+					GetFloat = Tensor.GetF32,
+					SetFloat = Tensor.SetF32,
+				},
+				Tensor
+			)
 		else
-			return setmetatable({
-				size = data.size, 
-				blob = ffi.cast("uint8_t*", data.blob),
-				blob_f16 = ffi.cast("uint16_t*", data.blob),
-				GetFloat = Tensor.GetQ4_0, 
-				SetFloat = Tensor.SetQ4_0
-			}, Tensor)
+			return setmetatable(
+				{
+					size = data.size,
+					blob = ffi.cast("uint8_t*", data.blob),
+					blob_f16 = ffi.cast("uint16_t*", data.blob),
+					GetFloat = Tensor.GetQ4_0,
+					SetFloat = Tensor.SetQ4_0,
+				},
+				Tensor
+			)
 		end
 	end
 end
-
-function Tensor.EnableThreading()
-	local ok, err = pcall(function()
-		local inject_threaded_matmul = require("threads")
-		inject_threaded_matmul(Tensor)
-	end)
-
-	if not ok then
-		print("threading can't be enabled: " .. err)
-	end
-end
-
 
 return Tensor
