@@ -70,6 +70,47 @@ local function Tokenizer(gguf_tokens, gguf_merges)
 		specialPattern = "(" .. table.concat(specialPattern, "|") .. ")"
 	end
 
+	local function reverse_bytemap(b1, b2)
+		if b1 == 196 then
+			if b2 >= 128 and b2 <= 160 then
+				return b2 - 128, 2
+			elseif b2 >= 161 and b2 <= 191 then
+				return b2 - 161 + 127, 2
+			end
+		elseif b1 == 197 then
+			if b2 >= 128 and b2 <= 130 then
+				return b2 + 158, 2
+			elseif b2 == 131 then
+				return 173, 2
+			end
+		elseif b1 == 194 then
+			if b2 >= 161 and b2 <= 191 then
+				return b2, 2
+			end
+		elseif b1 == 195 then
+			if b2 >= 128 and b2 <= 159 then
+				return b2 + 64, 2
+			elseif b2 >= 160 and b2 <= 191 then
+				return b2 + 128, 2
+			end
+		elseif b1 >= 33 and b1 <= 126 then
+			return b1, 1
+		end
+		
+		error("character out of range")
+	end
+
+	local function decode(str)
+		local out = ""
+		local i = 1
+		while i <= #str do
+			local str, size = reverse_bytemap(str:byte(i), str:byte(i+1))
+			out = out .. string.char(str)
+			i = i + size
+		end
+		return out
+	end
+
 	local function encode(str)
 		local function bytemap(b)
 			if b <= 32 then
@@ -90,6 +131,7 @@ local function Tokenizer(gguf_tokens, gguf_merges)
 
 			error("byte out of range")
 		end
+
 
 		local function MERGE(str)
 			local ids = {}
@@ -173,6 +215,8 @@ local function Tokenizer(gguf_tokens, gguf_merges)
 
 	return {
 		encode = encode,
+		decode = decode,
+		token_to_string = function(token) return decode(vocabulary.tokens[token]) end,
 		vocabulary = vocabulary,
 		merges = merges,
 		specialTokens = specialTokens,

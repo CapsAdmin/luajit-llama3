@@ -44,13 +44,12 @@ local GGMLType, GGMLTypeMap = (
 			{name = "I16", typeSize = SHORT, blockSize = 1},
 			{name = "I32", typeSize = INTEGER, blockSize = 1},
 		}
-
 		local map = {}
+
 		for i, v in ipairs(GGMLType) do
 			v.enum = i - 1
 			map[v.name] = v
 		end
-
 
 		return GGMLType, map
 	end
@@ -225,21 +224,21 @@ local function load_gguf(path)
 	end
 
 	_G.timer()
-	
 	local alignment = metadata["general.alignment"] or 32
 	local padding = alignment - (file:seek() % alignment)
 	local pos = file:seek() + padding
 	local remaining = file:seek("end")
 	file:seek("set", pos)
-	local remaining_size = remaining-pos
-	
+	local remaining_size = remaining - pos
 	local mega_buffer
 	_G.timer("reading gguf tensors")
 	local mega_buffer = ffi.cast("uint8_t *", ffi.C.malloc(remaining_size))
+
 	if ffi.C.fread(mega_buffer, 1, remaining_size, file) ~= remaining_size then
 		file:close()
 		error("Failed to read the tensor")
 	end
+
 	_G.timer()
 
 	for i, tensor in ipairs(tensors) do
@@ -258,11 +257,10 @@ local function load_gguf(path)
 		v.index = i
 	end
 
-
 	return {
 		metadata = metadata,
 		tensors = tensor_map,
 	}
 end
 
-return {load_gguf = load_gguf,GGMLType = GGMLType, GGMLTypeMap = GGMLTypeMap }
+return {load_gguf = load_gguf, GGMLType = GGMLType, GGMLTypeMap = GGMLTypeMap}

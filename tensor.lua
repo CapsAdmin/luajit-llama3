@@ -263,6 +263,19 @@ function Tensor:SaxyInPlace(thisOffset, that, thatOffset, size, a)
 	return self
 end
 
+function Tensor:RmsNormInPlace(x, weight, size, rmsNormEps)
+	local ss = x:Reduce(0, size, 0, function(acc, xi)
+		return acc + xi * xi
+	end)
+	ss = ss / size
+	ss = ss + rmsNormEps
+	ss = 1.0 / math.sqrt(ss)
+
+	self:MapInPlace(0, size, function(value, index)
+		return weight:GetFloat(index) * (ss * x:GetFloat(index))
+	end)
+end
+
 do -- some tests
 	local ggf = require("gguf")
 	local t = Tensor:F32(10)
@@ -343,5 +356,17 @@ do -- some tests
 		assert(out:GetFloat(2) == 7)
 	end
 end
+
+function Tensor.EnableThreading()
+	local ok, err = pcall(function()
+		local inject_threaded_matmul = require("threads")
+		inject_threaded_matmul(Tensor)
+	end)
+
+	if not ok then
+		print("threading can't be enabled: " .. err)
+	end
+end
+
 
 return Tensor
