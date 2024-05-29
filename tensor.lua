@@ -357,6 +357,47 @@ do -- some tests
 	end
 end
 
+do
+	local ctype = ffi.typeof([[
+		struct {
+			int size;
+			int type;
+			void *blob; 
+		}
+	]])
+
+	local ctype_ptr = ffi.typeof("$*", ctype)
+
+	function Tensor:ThreadSerialize()
+		return ctype({
+			size = self.size,
+			type = self.GetFloat == Tensor.GetF32 and 0 or 1,
+			blob = self.blob,
+		})
+	end
+
+	function Tensor:ThreadDeserialize(ptr)
+		local data = ffi.cast(ctype_ptr, ptr)
+
+		if data.type == 0 then
+			return setmetatable({
+				size = data.size, 
+				blob = ffi.cast("float*", data.blob), 
+				GetFloat = Tensor.GetF32, 
+				SetFloat = Tensor.SetF32
+			}, Tensor)
+		else
+			return setmetatable({
+				size = data.size, 
+				blob = ffi.cast("uint8_t*", data.blob),
+				blob_f16 = ffi.cast("uint16_t*", data.blob),
+				GetFloat = Tensor.GetQ4_0, 
+				SetFloat = Tensor.SetQ4_0
+			}, Tensor)
+		end
+	end
+end
+
 function Tensor.EnableThreading()
 	local ok, err = pcall(function()
 		local inject_threaded_matmul = require("threads")

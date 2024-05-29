@@ -105,17 +105,9 @@ local function inject_threaded_matmul(Tensor)
 		int stop; 
 		int dim1; 
 		
-		void *out_blob; 
-		int out_size;
-		int out_type;
-
-		void *self_blob; 
-		int self_size;
-		int self_type;
-
-		void *that_blob;
-		int that_size;
-		int that_type;
+		void *out; 
+		void *self;
+		void *that;
 	}]]
 	local structcdata = ffi.typeof(struct)
 	local struct_ptr = ffi.typeof(struct .. "*")
@@ -127,34 +119,14 @@ local function inject_threaded_matmul(Tensor)
 				local Tensor = require("tensor")
 				local ffi = require("ffi")
 				local udataptr = ffi.typeof([[]==] .. struct .. [==[*]])
-				--require("luajit_options")()
 			]==],
 			[==[
 				local data = udataptr(udata)
-				local function tensor(what)
-					local type = data[what .. "_type"]
-					if type == 0 then
-						return setmetatable({
-							size = data[what .. "_size"], 
-							blob = ffi.cast("float*", data[what .. "_blob"]), 
-							GetFloat = Tensor.GetF32, 
-							SetFloat = Tensor.SetF32
-						}, Tensor)
-					else
-						return setmetatable({
-							size = data[what .. "_size"], 
-							blob = ffi.cast("uint8_t*", data[what .. "_blob"]),
-							blob_f16 = ffi.cast("uint16_t*", data[what .. "_blob"]),
-							GetFloat = Tensor.GetQ4_0, 
-							SetFloat = Tensor.SetQ4_0
-						}, Tensor)
-					end
-				end
-
+				
 				local dim1 = data.dim1
-				local out = tensor("out")
-				local self = tensor("self")
-				local that = tensor("that")
+				local out = Tensor:ThreadDeserialize(data.out)
+				local self = Tensor:ThreadDeserialize(data.self)
+				local that = Tensor:ThreadDeserialize(data.that)
 
 				for i = data.start, data.stop-1 do
 					out:SetFloat(i, self:Dot(i * dim1, that, 0, dim1))
@@ -181,17 +153,9 @@ local function inject_threaded_matmul(Tensor)
 						stop = stop,
 						dim1 = dim1,
 
-						out_blob = out.blob,
-						out_size = out.size,
-						out_type = out.GetFloat == Tensor.GetF32 and 0 or 1,
-
-						self_blob = self.blob,
-						self_size = self.size,
-						self_type = self.GetFloat == Tensor.GetF32 and 0 or 1,
-
-						that_blob = that.blob,
-						that_size = that.size,
-						that_type = that.GetFloat == Tensor.GetF32 and 0 or 1,
+						out = out:ThreadSerialize(),
+						self = self:ThreadSerialize(),
+						that = that:ThreadSerialize(),
 					}
 				)
 			)
