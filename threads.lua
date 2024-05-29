@@ -81,14 +81,13 @@ end
 
 local thread_func_signature = "void *(*)(void *)"
 
-local function load_thread(header, code)
+local function load_thread(code)
 	local L = create_lua_state()
 	run_code(
 		L,
-		header .. [[local ffi = require("ffi");local function callback(udata) ]] .. code .. [[
-      end
-      _G.function_pointer = tonumber(ffi.cast('intptr_t', ffi.cast("void *(*)(void *)", callback)))
-   ]]
+		code .. [[
+		_G.function_pointer = tonumber(ffi.cast('intptr_t', ffi.cast("void *(*)(void *)", callback)))
+   		]]
 	)
 	return ffi.cast("void *(*)(void *)", get_function_pointer(L))
 end
@@ -114,13 +113,14 @@ local function threaded_for(encode_code, lua_code, thread_count)
 			[==[
 				local ffi = require("ffi")
 				local udataptr = ffi.typeof([[]==] .. struct .. [==[*]])
-			]==],
-			[==[
-				local data = udataptr(udata)
-				local start = data.start
-				local stop = data.stop
 
-				]==] .. lua_code .. [==[
+				local function callback(udata)			
+					local data = udataptr(udata)
+					local start = data.start
+					local stop = data.stop
+
+					]==] .. lua_code .. [==[
+				end
 			]==]
 		)
 		thread_pool[i] = func_ptr
@@ -132,16 +132,13 @@ local function threaded_for(encode_code, lua_code, thread_count)
 		local i = 0
 
 		while i < iterations do
-			local start = i
-			local stop = i + chunks
 			local func_ptr = assert(table.remove(thread_pool))
 			local tbl = {
-				start = start,
-				stop = stop,
+				start = i,
+				stop = i + chunks,
 			}
 			encode_callback(tbl)
-			local thread_id = run_thread(func_ptr, structcdata(tbl))
-			table.insert(threads, thread_id)
+			table.insert(threads, run_thread(func_ptr, structcdata(tbl)))
 			i = i + chunks
 			table.insert(thread_pool, 1, func_ptr)
 		end
