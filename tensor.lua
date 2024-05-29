@@ -148,7 +148,7 @@ do
 			local build_threaded_for = require("threads")
 			local parallel_for = build_threaded_for(
 				[[
-					int dim1; 
+					double dim1; 
 					void *out; 
 					void *self;
 					void *that;

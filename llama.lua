@@ -13,6 +13,7 @@ do
 	end
 end
 
+
 local ggf = require("gguf")
 local Tokenizer = require("tokenizer")
 local Configuration = require("configuration")
@@ -72,6 +73,106 @@ local function load_and_run(model_path, prompt, token_callback)
 		return value / (1.0 + math.exp(-value))
 	end
 
+	local function attention_step(h, xb, att, q, keyCache, valueCache, l,  position, kvMul, kvDim, headSize, contextLength, sqrtHeadSize)
+		local qOffset = h * headSize
+		local attOffset = h * contextLength
+
+		for t = 0, position do
+			local keyCacheOffset = t * kvDim + math.floor(h / kvMul) * headSize
+			local score = q:Dot(qOffset, keyCache, keyCacheOffset, headSize)
+			score = score / sqrtHeadSize
+			att:SetFloat(attOffset + t, score)
+		end
+
+		att:SoftMaxInPlace(attOffset, position + 1)
+		local xbOffset = h * headSize
+		xb:FillInPlace(xbOffset, headSize, 0)
+
+		for t = 0, position do
+			local vOffset = t * kvDim + math.floor(h / kvMul) * headSize
+			local a = att:GetFloat(attOffset + t)
+			xb:SaxyInPlace(xbOffset, valueCache, vOffset, headSize, a)
+		end
+	end
+
+	local function attention(numberOfHeads, xb, att, q, keyCache, valueCache, l,  position, kvMul, kvDim, headSize, contextLength, sqrtHeadSize)
+		for h = 0, numberOfHeads - 1 do
+			attention_step(h, xb, att, q, keyCache, valueCache, l,  position, kvMul, kvDim, headSize, contextLength, sqrtHeadSize)
+		end
+	end
+	local ffi = require("ffi")
+	local ok, err = pcall(function() 
+		local threaded_for = require("threads")
+		local bcode = string.dump(attention_step)
+
+		local parallel_for = threaded_for([[
+			void *xb; 
+			void *att;
+			void *q;
+			void *keyCache;
+			void *valueCache;
+			
+			double l;
+			double position;
+			double kvMul;
+			double kvDim;
+			double headSize; 
+			double contextLength;
+			double sqrtHeadSize;
+
+			uint8_t *bcode;
+			uint32_t bcode_len;
+		]], [[
+
+			local l = data.l
+			local position = data.position
+			local kvMul = data.kvMul
+			local kvDim = data.kvDim
+			local headSize = data.headSize
+			local contextLength = data.contextLength
+			local sqrtHeadSize = data.sqrtHeadSize	
+
+			local Tensor = require("tensor")
+			local xb = Tensor:ThreadDeserialize(data.xb)
+			local att = Tensor:ThreadDeserialize(data.att)
+			local q = Tensor:ThreadDeserialize(data.q)
+			local keyCache = Tensor:ThreadDeserialize(data.keyCache)
+			local valueCache = Tensor:ThreadDeserialize(data.valueCache)
+
+			local bcode = ffi.string(data.bcode, data.bcode_len)
+			local attention_step = loadstring(bcode)
+
+			for h = start, stop - 1 do
+				attention_step(h, xb, att, q, keyCache, valueCache, l,  position, kvMul, kvDim, headSize, contextLength, sqrtHeadSize)
+			end
+		]], 8)
+
+		local function build_cdata(data, xb, att, q, keyCache, valueCache, l, position, kvMul, kvDim, headSize, contextLength, sqrtHeadSize)
+			table.insert(data, xb:ThreadSerialize()) 
+			table.insert(data, att:ThreadSerialize()) 
+			table.insert(data, q:ThreadSerialize()) 
+			table.insert(data, keyCache:ThreadSerialize()) 
+			table.insert(data, valueCache:ThreadSerialize()) 
+
+			table.insert(data, l )
+			table.insert(data, position )
+			table.insert(data, kvMul )
+			table.insert(data, kvDim )
+			table.insert(data, headSize )
+			table.insert(data, contextLength )
+			table.insert(data, sqrtHeadSize)
+			
+			table.insert(data, ffi.cast("uint8_t*", bcode))
+			table.insert(data, #bcode)
+		end
+
+		attention = function(numberOfHeads, ...)
+			parallel_for(numberOfHeads, build_cdata, ...)
+		end
+	end)
+
+	print(ok, err)
+
 	local function forward(c, w, s, token, position)
 		local dim = c.dim
 		local headSize = c.headSize
@@ -104,27 +205,7 @@ local function load_and_run(model_path, prompt, token_callback)
 			s.k:CopyTo(0, s.keyCache[l + 1], position * kvDim, kvDim)
 			s.v:CopyTo(0, s.valueCache[l + 1], position * kvDim, kvDim)
 
-			for h = 0, c.numberOfHeads - 1 do
-				local qOffset = h * headSize
-				local attOffset = h * c.contextLength
-
-				for t = 0, position do
-					local keyCacheOffset = t * kvDim + math.floor(h / kvMul) * headSize
-					local score = s.q:Dot(qOffset, s.keyCache[l + 1], keyCacheOffset, headSize)
-					score = score / sqrtHeadSize
-					s.att:SetFloat(attOffset + t, score)
-				end
-
-				s.att:SoftMaxInPlace(attOffset, position + 1)
-				local xbOffset = h * headSize
-				s.xb:FillInPlace(xbOffset, headSize, 0)
-
-				for t = 0, position do
-					local vOffset = t * kvDim + math.floor(h / kvMul) * headSize
-					local a = s.att:GetFloat(attOffset + t)
-					s.xb:SaxyInPlace(xbOffset, s.valueCache[l + 1], vOffset, headSize, a)
-				end
-			end
+			attention(c.numberOfHeads, s.xb, s.att, s.q, s.keyCache[l + 1], s.valueCache[l + 1], l, position, kvMul, kvDim, headSize, c.contextLength, sqrtHeadSize)
 
 			w.wo[l]:MatMul(s.xb, s.xb2, dim, dim)
 			s.x:AddTensorInPlace(s.xb2)

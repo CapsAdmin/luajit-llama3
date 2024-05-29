@@ -133,7 +133,7 @@ local function threaded_for(encode_code, lua_code, thread_count)
 		func_pool[i] = func_ptr
 	end
 
-	return function(iterations, encode_callback, a, b, c, d, e)
+	return function(iterations, encode_callback, ...)
 		local chunks = iterations / thread_count
 		local threads = {}
 		local i = 0
@@ -147,7 +147,7 @@ local function threaded_for(encode_code, lua_code, thread_count)
 				i,
 				i + chunks,
 			}
-			encode_callback(tbl, a, b, c, d, e)
+			encode_callback(tbl, ...)
 			table_insert(
 				threads,
 				{
