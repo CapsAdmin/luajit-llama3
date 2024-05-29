@@ -164,16 +164,18 @@ do
 						out:SetFloat(i, self:Dot(i * dim1, that, 0, dim1))
 					end
 				]],
-				16
+				32
 			)
 
+			local function build_cdata(data, dim1, out, self, that)
+				table.insert(data, dim1)
+				table.insert(data, out:ThreadSerialize())
+				table.insert(data, self:ThreadSerialize())
+				table.insert(data, that:ThreadSerialize())
+			end
+
 			function Tensor:MatMul(that, out, dim0, dim1)
-				parallel_for(dim0, function(data)
-					data.dim1 = dim1
-					data.out = out:ThreadSerialize()
-					data.self = self:ThreadSerialize()
-					data.that = that:ThreadSerialize()
-				end)
+				parallel_for(dim0, build_cdata, dim1, out, self, that)
 			end
 		end)
 
@@ -302,17 +304,22 @@ function Tensor:SaxyInPlace(thisOffset, that, thatOffset, size, a)
 	return self
 end
 
-function Tensor:RmsNormInPlace(x, weight, size, rmsNormEps)
-	local ss = x:Reduce(0, size, 0, function(acc, xi)
+do
+	local function F1(acc, xi)
 		return acc + xi * xi
-	end)
-	ss = ss / size
-	ss = ss + rmsNormEps
-	ss = 1.0 / math.sqrt(ss)
+	end
 
-	self:MapInPlace(0, size, function(value, index)
+	local function F2(value, index, weight, ss, x)
 		return weight:GetFloat(index) * (ss * x:GetFloat(index))
-	end)
+	end
+
+	function Tensor:RmsNormInPlace(x, weight, size, rmsNormEps)
+		local ss = x:Reduce(0, size, 0, F1)
+		ss = ss / size
+		ss = ss + rmsNormEps
+		ss = 1.0 / math.sqrt(ss)
+		self:MapInPlace(0, size, F2, weight, ss, x)
+	end
 end
 
 do -- some tests
@@ -405,15 +412,15 @@ do
 		}
 	]])
 	local ctype_ptr = ffi.typeof("$*", ctype)
+	local ctype_box = ffi.typeof("$[1]", ctype)
 
 	function Tensor:ThreadSerialize()
-		return ctype(
-			{
-				size = self.size,
-				type = self.GetFloat == Tensor.GetF32 and 0 or 1,
-				blob = self.blob,
-			}
+		local ct = ctype(
+			self.size,
+			self.GetFloat == Tensor.GetF32 and 0 or 1,
+			ffi.cast("void *", self.blob)
 		)
+		return ct
 	end
 
 	function Tensor:ThreadDeserialize(ptr)

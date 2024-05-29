@@ -68,6 +68,10 @@ local function load_and_run(model_path, prompt, token_callback)
 		end)(),
 	}
 
+	local function exp(value)
+		return value / (1.0 + math.exp(-value))
+	end
+
 	local function forward(c, w, s, token, position)
 		local dim = c.dim
 		local headSize = c.headSize
@@ -100,7 +104,6 @@ local function load_and_run(model_path, prompt, token_callback)
 			s.k:CopyTo(0, s.keyCache[l + 1], position * kvDim, kvDim)
 			s.v:CopyTo(0, s.valueCache[l + 1], position * kvDim, kvDim)
 
-			
 			for h = 0, c.numberOfHeads - 1 do
 				local qOffset = h * headSize
 				local attOffset = h * c.contextLength
@@ -129,9 +132,7 @@ local function load_and_run(model_path, prompt, token_callback)
 			w.w1[l]:MatMul(s.xb, s.hb, c.hiddenDim, dim)
 			w.w3[l]:MatMul(s.xb, s.hb2, c.hiddenDim, dim)
 
-			s.hb:MapInPlace(0, s.hb.size, function(value)
-				return value / (1.0 + math.exp(-value))
-			end)
+			s.hb:MapInPlace(0, s.hb.size, exp)
 
 			s.hb:MultiplyTensorInPlace(s.hb2)
 			w.w2[l]:MatMul(s.hb, s.xb, dim, c.hiddenDim)

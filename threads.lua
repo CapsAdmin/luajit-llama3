@@ -106,8 +106,15 @@ local function threaded_for(encode_code, lua_code, thread_count)
 	}]]
 	local structcdata = ffi.typeof(struct)
 	local struct_ptr = ffi.typeof(struct .. "*")
-	local thread_pool = {}
+	local func_pool = {}
+	local table_insert = table.insert
+	local table_remove = table.remove
+	local unpack = unpack
+	local ipairs = ipairs
 
+	-- we need at least thread_count amount of functions
+	-- since multiple threads cannot access execute a lua function 
+	-- in a single lua state at the same time
 	for i = 1, thread_count do
 		local func_ptr = load_thread(
 			[==[
@@ -123,28 +130,37 @@ local function threaded_for(encode_code, lua_code, thread_count)
 				end
 			]==]
 		)
-		thread_pool[i] = func_ptr
+		func_pool[i] = func_ptr
 	end
 
-	return function(iterations, encode_callback)
+	return function(iterations, encode_callback, a, b, c, d, e)
 		local chunks = iterations / thread_count
 		local threads = {}
 		local i = 0
 
 		while i < iterations do
-			local func_ptr = assert(table.remove(thread_pool))
+			local func_ptr = table_remove(func_pool)
+
+			if not func_ptr then error("too few threads in thread pool", 2) end
+
 			local tbl = {
-				start = i,
-				stop = i + chunks,
+				i,
+				i + chunks,
 			}
-			encode_callback(tbl)
-			table.insert(threads, run_thread(func_ptr, structcdata(tbl)))
+			encode_callback(tbl, a, b, c, d, e)
+			table_insert(
+				threads,
+				{
+					id = run_thread(func_ptr, structcdata(unpack(tbl))),
+					func_ptr = func_ptr,
+				}
+			)
 			i = i + chunks
-			table.insert(thread_pool, 1, func_ptr)
 		end
 
-		for i, thread_id in ipairs(threads) do
-			check_pthread(pt.pthread_join(thread_id, nil))
+		for i, thread in ipairs(threads) do
+			check_pthread(pt.pthread_join(thread.id, nil))
+			table_insert(func_pool, thread.func_ptr)
 		end
 	end
 end
