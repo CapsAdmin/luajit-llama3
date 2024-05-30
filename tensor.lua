@@ -143,7 +143,7 @@ do
 		end
 	end
 
-	function Tensor.EnableThreadedMatrixDotProduct()
+	function Tensor.EnableThreadedMatrixDotProduct() 
 		local ok, err = pcall(function()
 
 			local build_parallel_for = require("threads")
@@ -301,7 +301,7 @@ do
 	end
 end
 
-do -- some tests
+if false then -- some tests
 	local ggf = require("gguf")
 	local t = Tensor:F32(10)
 
