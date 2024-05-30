@@ -15,16 +15,17 @@ end
 
 function Blob:F32(size, blob)
 	blob = blob or ffi.cast("float*", ffi.C.malloc(size * 4))
+	blob = ffi.cast("float*", blob)
 	return setmetatable(
 		{
 			type = "F32",
-			blob = ffi.cast("float*", blob),
+			blob = blob,
 			size = tonumber(size),
 			SetFloat = function(s, index, val)
-				s.blob[index] = val
+				blob[index] = val
 			end,
 			GetFloat = function(s, index)
-				return s.blob[index]
+				return blob[index]
 			end,
 		},
 		Blob
@@ -52,20 +53,22 @@ do
 
 	function Blob:Q4_0(size, blob)
 		blob = blob or ffi.cast("uint8_t*", ffi.C.malloc(size))
+		blob = ffi.cast("uint8_t*", blob)
+		local blob_f16 = ffi.cast("uint16_t*", blob)
 		return setmetatable(
 			{
 				type = "Q4_0",
-				blob = ffi.cast("uint8_t*", blob),
+				blob = blob,
 				size = tonumber(size),
-				blob_f16 = ffi.cast("uint16_t*", blob),
+				blob_f16 = blob_f16,
 				GetFloat = function(s, index)
 					local block_index = rshift(index, 5)
 					local block_offset = block_index * type_size
-					local scale = f16_to_f32(s.blob_f16[block_index * half_type_size])
+					local scale = f16_to_f32(blob_f16[block_index * half_type_size])
 					local modIndex = band(index, block_size - 1)
 					local base_offset = block_offset + band(modIndex, half_block_size - 1)
 					local shift_amount = rshift(modIndex, 4) * 4
-					local quant = band(rshift(s.blob[2 + base_offset], shift_amount), 0x0F)
+					local quant = band(rshift(blob[2 + base_offset], shift_amount), 0x0F)
 					return (quant - 8) * scale
 				end,
 			},
@@ -84,20 +87,26 @@ do
 	]])
 	local ctype_ptr = ffi.typeof("$*", ctype)
 	local ctype_box = ffi.typeof("$[1]", ctype)
+	local type_map = {
+		F32 = 0,
+		Q4_0 = 1,
+	}
+
+	-- double lookup
+	for i, str in pairs(type_map) do
+		type_map[str] = i
+	end
 
 	function Blob:ThreadSerialize()
-		local ct = ctype(self.size, self.type == "F32" and 0 or 1, ffi.cast("void *", self.blob))
-		return ct
+		return ctype(self.size, type_map[self.type], ffi.cast("void *", self.blob))
 	end
 
 	function Blob:ThreadDeserialize(ptr)
 		local data = ffi.cast(ctype_ptr, ptr)
 
-		if data.type == 0 then
-			return Blob:F32(data.size, data.blob)
-		else
-			return Blob:Q4_0(data.size, data.blob)
-		end
+		if not type_map[data.type] then error("unknown type " .. data.type) end
+
+		return Blob[type_map[data.type]](Blob, data.size, data.blob)
 	end
 end
 
