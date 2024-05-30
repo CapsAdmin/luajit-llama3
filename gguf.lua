@@ -257,10 +257,7 @@ local function load_gguf(path)
 		v.index = i
 	end
 
-	return {
-		metadata = metadata,
-		tensors = tensor_map,
-	}
+	return metadata, tensor_map
 end
 
-return {load_gguf = load_gguf, GGMLType = GGMLType, GGMLTypeMap = GGMLTypeMap}
+return {load = load_gguf, GGMLType = GGMLType, GGMLTypeMap = GGMLTypeMap}

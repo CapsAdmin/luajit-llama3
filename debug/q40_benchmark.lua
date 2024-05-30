@@ -2,9 +2,9 @@ local measure = require("debug.measure")
 local profiler = require("debug.profiler")
 local Weights = require("weights")
 local Configuration = require("configuration")
-local ggf = require("gguf")
-local gguf = ggf.load_gguf("/home/caps/projects/llama3.java/Meta-Llama-3-8B-Instruct-Q4_0.gguf")
-local weights = Weights(gguf.tensors, gguf.metadata["llama.block_count"])
+local gguf = require("gguf")
+local metadata, tensors = gguf.load("/home/caps/projects/llama3.java/Meta-Llama-3-8B-Instruct-Q4_0.gguf")
+local weights = Weights(tensors, metadata["llama.block_count"])
 local wo = weights.wo[1]
 
 

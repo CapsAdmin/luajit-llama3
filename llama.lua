@@ -1,7 +1,7 @@
 require("debug.luajit_options")()
 local profiler = require("debug.profiler")
 _G.measure = require("debug.measure")
-local ggf = require("gguf")
+local gguf = require("gguf")
 local Tokenizer = require("tokenizer")
 local Configuration = require("configuration")
 local Weights = require("weights")
@@ -14,177 +14,77 @@ local function load_and_run(model_path, prompt, token_callback)
 	local temperature = 0.1
 	local topp = 0.95
 	local max_tokens = 50
-	local gguf = ggf.load_gguf(model_path)
-	assert(gguf.metadata["tokenizer.ggml.model"] == "gpt2")
-	assert(gguf.metadata["tokenizer.ggml.tokens"])
-	assert(gguf.metadata["tokenizer.ggml.merges"])
-	local tokenizer = Tokenizer(gguf.metadata["tokenizer.ggml.tokens"], gguf.metadata["tokenizer.ggml.merges"])
-	local configuration = Configuration(context_length, gguf.metadata, tokenizer.vocabulary.size())
-	local weights = Weights(gguf.tensors, configuration.numberOfLayers)
-	local config = configuration
+	
+	local math_exp = math.exp
+	local floor = math.floor
+
+	local metadata, tensors = gguf.load(model_path)
+	assert(metadata["tokenizer.ggml.model"] == "gpt2")
+	assert(metadata["tokenizer.ggml.tokens"])
+	assert(metadata["tokenizer.ggml.merges"])
+	local tokenizer = Tokenizer(metadata["tokenizer.ggml.tokens"], metadata["tokenizer.ggml.merges"])
+	local config = Configuration(context_length, metadata, tokenizer.vocabulary.size())
+	local weights = Weights(tensors, config.numberOfLayers)
 	local kvDim = (config.dim * config.numberOfKeyValueHeads) / config.numberOfHeads
 	local sampler = Sampler:new(config.vocabularySize, temperature, topp)
+
+	local tokens = tokenizer.encode(prompt)
+
+	local function kv_cache()
+		local a = {}
+
+		for i = 1, config.numberOfLayers do
+			a[i] = Tensor:F32(config.contextLength * kvDim)
+		end
+
+		return a
+	end
+
 	local state = {
-		x = Tensor:F32(config.dim):SetName("x[F32]"),
-		xb = Tensor:F32(config.dim):SetName("xb[F32]"),
-		xb2 = Tensor:F32(config.dim):SetName("xb2[F32]"),
-		hb = Tensor:F32(config.hiddenDim):SetName("hb[F32]"),
-		hb2 = Tensor:F32(config.hiddenDim):SetName("hb2[F32]"),
-		q = Tensor:F32(config.dim):SetName("q[F32]"),
-		k = Tensor:F32(config.dim):SetName("k[F32]"),
-		v = Tensor:F32(config.dim):SetName("v[F32]"),
-		att = Tensor:F32(config.numberOfHeads * config.contextLength):SetName("att[F32]"),
-		logits = Tensor:F32(config.vocabularySize):SetName("logits[F32]"),
-		keyCache = (function()
-			local a = {}
-
-			for i = 1, config.numberOfLayers do
-				a[i] = Tensor:F32(config.contextLength * kvDim)
-			end
-
-			return a
-		end)(),
-		valueCache = (function()
-			local a = {}
-
-			for i = 1, config.numberOfLayers do
-				a[i] = Tensor:F32(config.contextLength * kvDim)
-			end
-
-			return a
-		end)(),
+		x = Tensor:F32(config.dim),
+		xb = Tensor:F32(config.dim),
+		xb2 = Tensor:F32(config.dim),
+		hb = Tensor:F32(config.hiddenDim),
+		hb2 = Tensor:F32(config.hiddenDim),
+		q = Tensor:F32(config.dim),
+		k = Tensor:F32(config.dim),
+		v = Tensor:F32(config.dim),
+		att = Tensor:F32(config.numberOfHeads * config.contextLength),
+		logits = Tensor:F32(config.vocabularySize),
+		keyCache = kv_cache(),
+		valueCache = kv_cache(),
 	}
+	
 
-	local function attention_step(
-		xb,
-		att,
-		q,
-		keyCache,
-		valueCache,
-		l,
-		position,
-		kvMul,
-		kvDim,
-		headSize,
-		contextLength,
-		sqrtHeadSize,
-		thread_data
-	)
-		local h = thread_data
-		local qOffset = h * headSize
-		local attOffset = h * contextLength
-
-		for t = 0, position do
-			local keyCacheOffset = t * kvDim + math.floor(h / kvMul) * headSize
-			local score = q:Dot(qOffset, keyCache, keyCacheOffset, headSize)
-			score = score / sqrtHeadSize
-			att:SetFloat(attOffset + t, score)
-		end
-
-		att:SoftMaxInPlace(attOffset, position + 1)
-		local xbOffset = h * headSize
-		xb:FillInPlace(xbOffset, headSize, 0)
-
-		for t = 0, position do
-			local vOffset = t * kvDim + math.floor(h / kvMul) * headSize
-			local a = att:GetFloat(attOffset + t)
-			xb:SaxyInPlace(xbOffset, valueCache, vOffset, headSize, a)
-		end
-	end
-
-	local function attention(
-		numberOfHeads,
-		xb,
-		att,
-		q,
-		keyCache,
-		valueCache,
-		l,
-		position,
-		kvMul,
-		kvDim,
-		headSize,
-		contextLength,
-		sqrtHeadSize
-	)
-		for h = 0, numberOfHeads - 1 do
-			attention_step(
-				xb,
-				att,
-				q,
-				keyCache,
-				valueCache,
-				l,
-				position,
-				kvMul,
-				kvDim,
-				headSize,
-				contextLength,
-				sqrtHeadSize,
-				h
-			)
-		end
-	end
-
-	if false then -- this doesn't really do much
-		local ok, err = pcall(function()
-			local ffi = require("ffi")
-			local threaded_for = require("threads")
-			local run = threaded_for(
-				attention_step,
-				{
-					"@tensor",
-					"@tensor",
-					"@tensor",
-					"@tensor",
-					"@tensor",
-					"double",
-					"double",
-					"double",
-					"double",
-					"double",
-					"double",
-					"double",
-				},
-				16
-			)
-			attention = function(numberOfHeads, ...)
-				run(numberOfHeads, ...)
-			end
-		end)
-		if not ok then print(err) end
-	end
-
-	local math_exp = math.exp
 	local function exp(value)
 		return value / (1.0 + math_exp(-value))
 	end
 
-	local function forward(c, w, s, token, position)
-		local dim = c.dim
-		local headSize = c.headSize
-		local kvDim = (c.dim * c.numberOfKeyValueHeads) / c.numberOfHeads
-		local kvMul = c.numberOfHeads / c.numberOfKeyValueHeads
+	local function forward(token, position)
+		local dim = config.dim
+		local headSize = config.headSize
+		local kvDim = (config.dim * config.numberOfKeyValueHeads) / config.numberOfHeads
+		local kvMul = config.numberOfHeads / config.numberOfKeyValueHeads
 		local sqrtHeadSize = math.sqrt(headSize)
-		w.token_embedding_table:CopyTo(token * dim, s.x, 0, dim)
+		weights.token_embedding_table:CopyTo(token * dim, state.x, 0, dim)
 
-		for l = 1, c.numberOfLayers do
-			local keyCache = s.keyCache[l]
-			local valueCache = s.valueCache[l]
+		for l = 1, config.numberOfLayers do
+			local keyCache = state.keyCache[l]
+			local valueCache = state.valueCache[l]
 
-			s.xb:RmsNormInPlace(s.x, w.rms_att_weight[l], dim, c.rmsNormEps)
-			w.wq[l]:MatrixDotProduct(s.xb, s.q, dim, dim)
-			w.wk[l]:MatrixDotProduct(s.xb, s.k, kvDim, dim)
-			w.wv[l]:MatrixDotProduct(s.xb, s.v, kvDim, dim)
+			state.xb:RmsNormInPlace(state.x, weights.rms_att_weight[l], dim, config.rmsNormEps)
+			weights.wq[l]:MatrixDotProduct(state.xb, state.q, dim, dim)
+			weights.wk[l]:MatrixDotProduct(state.xb, state.k, kvDim, dim)
+			weights.wv[l]:MatrixDotProduct(state.xb, state.v, kvDim, dim)
 
 			for i = 0, dim - 1, 2 do
 				local head_dim = i % headSize
-				local fcr = c.ropeFreqsReal[1 + ((position * (headSize / 2) + (head_dim / 2)))]
-				local fci = c.ropeFreqsImag[1 + ((position * (headSize / 2) + (head_dim / 2)))]
+				local fcr = config.ropeFreqsReal[1 + ((position * (headSize / 2) + (head_dim / 2)))]
+				local fci = config.ropeFreqsImag[1 + ((position * (headSize / 2) + (head_dim / 2)))]
 				local rotn = i < kvDim and 2 or 1
 
 				for v = 0, rotn - 1 do
-					local vec = v == 0 and s.q or s.k
+					local vec = v == 0 and state.q or state.k
 					local v0 = vec:GetFloat(i)
 					local v1 = vec:GetFloat(i + 1)
 					vec:SetFloat(i, v0 * fcr - v1 * fci)
@@ -192,44 +92,51 @@ local function load_and_run(model_path, prompt, token_callback)
 				end
 			end
 
-			s.k:CopyTo(0, keyCache, position * kvDim, kvDim)
-			s.v:CopyTo(0, valueCache, position * kvDim, kvDim)
-			attention(
-				c.numberOfHeads,
-				s.xb,
-				s.att,
-				s.q,
-				keyCache,
-				valueCache,
-				l,
-				position,
-				kvMul,
-				kvDim,
-				headSize,
-				c.contextLength,
-				sqrtHeadSize
-			)
-			w.wo[l]:MatrixDotProduct(s.xb, s.xb2, dim, dim)
-			s.x:AddTensorInPlace(s.xb2)
-			s.xb:RmsNormInPlace(s.x, w.rms_ffn_weight[l], dim, c.rmsNormEps)
-			w.w1[l]:MatrixDotProduct(s.xb, s.hb, c.hiddenDim, dim)
-			w.w3[l]:MatrixDotProduct(s.xb, s.hb2, c.hiddenDim, dim)
-			s.hb:MapInPlace(0, s.hb.size, exp)
-			s.hb:MultiplyTensorInPlace(s.hb2)
-			w.w2[l]:MatrixDotProduct(s.hb, s.xb, dim, c.hiddenDim)
-			s.x:AddTensorInPlace(s.xb)
+			state.k:CopyTo(0, keyCache, position * kvDim, kvDim)
+			state.v:CopyTo(0, valueCache, position * kvDim, kvDim)
+
+			for h = 0, config.numberOfHeads - 1 do
+				local qOffset = h * headSize
+				local attOffset = h * config.contextLength
+
+				for t = 0, position do
+					local keyCacheOffset = t * kvDim + floor(h / kvMul) * headSize
+					local score = state.q:Dot(qOffset, keyCache, keyCacheOffset, headSize)
+					score = score / sqrtHeadSize
+					state.att:SetFloat(attOffset + t, score)
+				end
+
+				state.att:SoftMaxInPlace(attOffset, position + 1)
+				local xbOffset = h * headSize
+				state.xb:FillInPlace(xbOffset, headSize, 0)
+
+				for t = 0, position do
+					local vOffset = t * kvDim + floor(h / kvMul) * headSize
+					local a = state.att:GetFloat(attOffset + t)
+					state.xb:SaxyInPlace(xbOffset, valueCache, vOffset, headSize, a)
+				end
+			end
+
+			weights.wo[l]:MatrixDotProduct(state.xb, state.xb2, dim, dim)
+			state.x:AddTensorInPlace(state.xb2)
+			state.xb:RmsNormInPlace(state.x, weights.rms_ffn_weight[l], dim, config.rmsNormEps)
+			weights.w1[l]:MatrixDotProduct(state.xb, state.hb, config.hiddenDim, dim)
+			weights.w3[l]:MatrixDotProduct(state.xb, state.hb2, config.hiddenDim, dim)
+			state.hb:MapInPlace(0, state.hb.size, exp)
+			state.hb:MultiplyTensorInPlace(state.hb2)
+			weights.w2[l]:MatrixDotProduct(state.hb, state.xb, dim, config.hiddenDim)
+			state.x:AddTensorInPlace(state.xb)
 		end
 
-		s.x:RmsNormInPlace(s.x, w.rms_final_weight, dim, c.rmsNormEps)
-		w.wcls:MatrixDotProduct(s.x, s.logits, c.vocabularySize, dim)
+		state.x:RmsNormInPlace(state.x, weights.rms_final_weight, dim, config.rmsNormEps)
+		weights.wcls:MatrixDotProduct(state.x, state.logits, config.vocabularySize, dim)
 	end
 
-	local tokens = tokenizer.encode(prompt)
 	local token = tokenizer.encode("<|begin_of_text|>")[1]
 	local next_token
 
 	for pos = 1, max_tokens do
-		forward(configuration, weights, state, token - 1, pos - 1)
+		forward(token - 1, pos - 1)
 
 		if pos < #tokens then
 			next_token = tokens[pos]
