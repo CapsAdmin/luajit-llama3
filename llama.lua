@@ -146,16 +146,18 @@ local function load_and_run(model_path, prompt, token_callback)
 					"double",
 					"double",
 				},
-				4
+				16
 			)
 			attention = function(numberOfHeads, ...)
 				run(numberOfHeads, ...)
 			end
 		end)
+		if not ok then print(err) end
 	end
 
+	local math_exp = math.exp
 	local function exp(value)
-		return value / (1.0 + math.exp(-value))
+		return value / (1.0 + math_exp(-value))
 	end
 
 	local function forward(c, w, s, token, position)
@@ -166,7 +168,10 @@ local function load_and_run(model_path, prompt, token_callback)
 		local sqrtHeadSize = math.sqrt(headSize)
 		w.token_embedding_table:CopyTo(token * dim, s.x, 0, dim)
 
-		for l = 0, c.numberOfLayers - 1 do
+		for l = 1, c.numberOfLayers do
+			local keyCache = s.keyCache[l]
+			local valueCache = s.valueCache[l]
+
 			s.xb:RmsNormInPlace(s.x, w.rms_att_weight[l], dim, c.rmsNormEps)
 			w.wq[l]:MatrixDotProduct(s.xb, s.q, dim, dim)
 			w.wk[l]:MatrixDotProduct(s.xb, s.k, kvDim, dim)
@@ -187,15 +192,15 @@ local function load_and_run(model_path, prompt, token_callback)
 				end
 			end
 
-			s.k:CopyTo(0, s.keyCache[l + 1], position * kvDim, kvDim)
-			s.v:CopyTo(0, s.valueCache[l + 1], position * kvDim, kvDim)
+			s.k:CopyTo(0, keyCache, position * kvDim, kvDim)
+			s.v:CopyTo(0, valueCache, position * kvDim, kvDim)
 			attention(
 				c.numberOfHeads,
 				s.xb,
 				s.att,
 				s.q,
-				s.keyCache[l + 1],
-				s.valueCache[l + 1],
+				keyCache,
+				valueCache,
 				l,
 				position,
 				kvMul,

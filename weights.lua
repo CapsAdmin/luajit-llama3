@@ -139,8 +139,8 @@ end
 local function loadTensorArray(size, getTensorEntry)
 	local array = {}
 
-	for i = 0, size - 1 do
-		array[i] = loadTensor(getTensorEntry(i))
+	for i = 1, size do
+		array[i] = loadTensor(getTensorEntry(i-1))
 	end
 
 	return array
