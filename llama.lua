@@ -241,11 +241,8 @@ local model_path = ...
 local prompt = [[<|start_header_id|>user<|end_header_id|>
 hello<|eot_id|><|start_header_id|>assistant<|end_header_id|>
 ]]
-profiler.Start()
 
 load_and_run(model_path, prompt, function(token)
 	io.write(token)
 	io.flush()
 end)
-
-profiler.Stop()

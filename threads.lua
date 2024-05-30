@@ -243,6 +243,4 @@ local function threaded_for2(callback, ctypes, thread_count)
 	end
 end
 
---local f = threaded_for2(function(a, b, thread_data) print(a, b) end, {"double", "double"}, 2)
---f(10, 1, 2)
 return threaded_for2

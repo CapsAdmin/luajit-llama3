@@ -227,35 +227,4 @@ local function Tokenizer(gguf_tokens, gguf_merges)
 	}
 end
 
-
-if false then
-    local tks = Tokenizer().encode("dæt ær øn står ære å snåkke mæd deg")
-    local expected = {
-        67,
-        9371,
-        83,
-        66113,
-        81,
-        39218,
-        77,
-        357,
-        18382,
-        66113,
-        265,
-        13376,
-        4224,
-        3870,
-        91861,
-        296,
-        9371,
-        67,
-        5367,
-    }
-    assert(#tks == #expected)
-
-    for k, v in pairs(expected) do
-        assert(tks[k] == expected[k] + 1)
-    end
-end
-
 return Tokenizer
