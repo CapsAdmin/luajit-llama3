@@ -49,10 +49,11 @@ do
 	local block_size = ggf.GGMLTypeMap.Q4_0.blockSize
 	local half_block_size = block_size / 2
 	local type_size = ggf.GGMLTypeMap.Q4_0.typeSize
+	local half_type_size = type_size / 2
 	local rshift = bit.rshift
 	local band = bit.band
 	local ldexp = math.ldexp
-	local floor = math.floor
+	local lshift = bit.lshift
 
 	-- f16_to_f32 is not accurate because we don't need to handle nan, inf, etc
 	local function f16_to_f32(bits)
@@ -63,14 +64,17 @@ do
 	end
 
 	function Blob:GetQ4_0(index)
-		local block_index = floor(index / block_size)
-		local block_offset = floor(block_index * type_size)
-		local scale = f16_to_f32(self.blob_f16[block_offset / 2])
-		-- Calculate the shift amount using bitwise operations to avoid branches
+		local block_index = rshift(index, 5)
+		local block_offset = block_index * type_size
+		
+		local scale = f16_to_f32(self.blob_f16[block_index * half_type_size])
+
 		local modIndex = band(index, block_size - 1)
-		local base_offset = block_offset + 2 + band(modIndex, half_block_size - 1)
+		local base_offset = block_offset + band(modIndex, half_block_size - 1)
+
 		local shift_amount = rshift(modIndex, 4) * 4
-		local quant = band(rshift(self.blob[base_offset], shift_amount), 0x0F)
+		local quant = band(rshift(self.blob[2 + base_offset], shift_amount), 0x0F)
+
 		return (quant - 8) * scale
 	end
 
