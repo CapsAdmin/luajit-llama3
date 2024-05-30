@@ -162,7 +162,7 @@ local reader, read_value = (
 )()
 
 local function load_gguf(path)
-	_G.timer("reading gguf metadata")
+	_G.measure("reading gguf metadata")
 	local file = assert(io.open(path, "r"))
 	assert(file:read(4) == "GGUF", "not a gguf file")
 
@@ -223,7 +223,7 @@ local function load_gguf(path)
 		}
 	end
 
-	_G.timer()
+	_G.measure()
 	local alignment = metadata["general.alignment"] or 32
 	local padding = alignment - (file:seek() % alignment)
 	local pos = file:seek() + padding
@@ -231,7 +231,7 @@ local function load_gguf(path)
 	file:seek("set", pos)
 	local remaining_size = remaining - pos
 	local mega_buffer
-	_G.timer("reading gguf tensors")
+	_G.measure("reading gguf tensors")
 	local mega_buffer = ffi.cast("uint8_t *", ffi.C.malloc(remaining_size))
 
 	if ffi.C.fread(mega_buffer, 1, remaining_size, file) ~= remaining_size then
@@ -239,7 +239,7 @@ local function load_gguf(path)
 		error("Failed to read the tensor")
 	end
 
-	_G.timer()
+	_G.measure()
 
 	for i, tensor in ipairs(tensors) do
 		tensor.blob = mega_buffer + tensor.offset

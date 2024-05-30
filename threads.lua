@@ -98,7 +98,11 @@ local function run_thread(func_ptr, udata)
 	return thread_id[0]
 end
 
-local function threaded_for(encode_code, lua_code, thread_count)
+local function join_thread(id)
+	check_pthread(pt.pthread_join(id, nil))
+end
+
+local function threaded_for(encode_code, lua_header_code, lua_code, thread_count)
 	local struct = [[struct {
 		int start;
 		int stop;
@@ -121,6 +125,8 @@ local function threaded_for(encode_code, lua_code, thread_count)
 				local ffi = require("ffi")
 				local udataptr = ffi.typeof([[]==] .. struct .. [==[*]])
 
+			]==] .. lua_header_code .. [==[
+
 				local function callback(udata)			
 					local data = udataptr(udata)
 					local start = data.start
@@ -133,7 +139,7 @@ local function threaded_for(encode_code, lua_code, thread_count)
 		func_pool[i] = func_ptr
 	end
 
-	return function(iterations, encode_callback, a,b,c,d,e,f,g,h,i,j,k,l,m,n)
+	return function(iterations, encode_callback, a, b, c, d, e, f, g, h, i, j, k, l, m, n)
 		local chunks = iterations / thread_count
 		local threads = {}
 		local i = 0
@@ -147,7 +153,7 @@ local function threaded_for(encode_code, lua_code, thread_count)
 				i,
 				i + chunks,
 			}
-			encode_callback(tbl, a,b,c,d,e,f,g,h,i,j,k,l,m,n)
+			encode_callback(tbl, a, b, c, d, e, f, g, h, i, j, k, l, m, n)
 			table_insert(
 				threads,
 				{
@@ -159,7 +165,7 @@ local function threaded_for(encode_code, lua_code, thread_count)
 		end
 
 		for i, thread in ipairs(threads) do
-			check_pthread(pt.pthread_join(thread.id, nil))
+			join_thread(thread.id)
 			table_insert(func_pool, thread.func_ptr)
 		end
 	end
@@ -189,58 +195,54 @@ local function threaded_for2(callback, ctypes, thread_count)
 		if type == "@tensor" then
 			struct_code = struct_code .. "void * " .. name .. ";\n"
 			unpack_code = unpack_code .. "local " .. name .. " = Tensor:ThreadDeserialize(data." .. name .. ")\n"
-			encode_code = encode_code .. "table.insert(data, "..name..":ThreadSerialize())\n"
+			encode_code = encode_code .. "table.insert(data, " .. name .. ":ThreadSerialize())\n"
 		elseif type == "@string" then
 			struct_code = struct_code .. "uint8_t * " .. name .. ";\n"
 			struct_code = struct_code .. "uint32_t " .. name .. "_len;\n"
-			
 			unpack_code = unpack_code .. "local " .. name .. " = ffi.string(data." .. name .. ", data." .. name .. "_len)\n"
-
-			encode_code = encode_code .. "table.insert(data, ffi.cast('uint8_t*', "..name.."))\n"
-			encode_code = encode_code .. "table.insert(data, #"..name..")\n"
+			encode_code = encode_code .. "table.insert(data, ffi.cast('uint8_t*', " .. name .. "))\n"
+			encode_code = encode_code .. "table.insert(data, #" .. name .. ")\n"
 		else
 			struct_code = struct_code .. type .. " " .. name .. ";\n"
 			unpack_code = unpack_code .. "local " .. name .. " = data." .. name .. "\n"
-			encode_code = encode_code .. "table.insert(data, "..name..")\n"
+			encode_code = encode_code .. "table.insert(data, " .. name .. ")\n"
 		end
 	end
 
 	local parallel_for = threaded_for(
-		struct_code..[[
+		struct_code .. [[
 			uint8_t *lua_bcode;
 			uint32_t lua_bcode_len;
 		]],
-		[[ 
-
+		[[
 			local ffi = require("ffi")
 			local Tensor = require("tensor")
-
-		]]..unpack_code .. [[
-			local callback = loadstring(ffi.string(data.lua_bcode, data.lua_bcode_len))
+			local lua_func
+		]],
+		unpack_code .. [[
+			lua_func = lua_func or loadstring(ffi.string(data.lua_bcode, data.lua_bcode_len))
 			for h = start, stop - 1 do
-				callback(]] .. table.concat(upvalues, ", ") .. [[, h)
+				lua_func(]] .. table.concat(upvalues, ", ") .. [[, h)
 			end
 		]],
 		thread_count
 	)
-
-	local build_cdata = loadstring([[
+	local build_cdata = loadstring(
+		[[
 		local bcode = ...
-		return function(data, ]]..table.concat(upvalues, ", ")..[[)
-			]]..encode_code..[[
+		return function(data, ]] .. table.concat(upvalues, ", ") .. [[)
+			]] .. encode_code .. [[
 			
 			table.insert(data, ffi.cast("uint8_t *", bcode))
 			table.insert(data, #bcode)
 		end
-	]])(bcode)
-
+	]]
+	)(bcode)
 	return function(max, ...)
 		parallel_for(max, build_cdata, ...)
 	end
 end
 
-
 --local f = threaded_for2(function(a, b, thread_data) print(a, b) end, {"double", "double"}, 2)
 --f(10, 1, 2)
-
 return threaded_for2

@@ -1,33 +1,19 @@
-require("luajit_options")()
-
-do
-	local timers = {}
-
-	function timer(what)
-		if what then
-			table.insert(timers, 1, {what = what, time = os.clock()})
-		else
-			local t = table.remove(timers, 1)
-			print(t.what .. " took " .. (os.clock() - t.time) .. " seconds")
-		end
-	end
-end
-
-
+require("debug.luajit_options")()
+local profiler = require("debug.profiler")
+_G.measure = require("debug.measure")
 local ggf = require("gguf")
 local Tokenizer = require("tokenizer")
 local Configuration = require("configuration")
 local Weights = require("weights")
 local Tensor = require("tensor")
 local Sampler = require("topp_sampler")
-
-Tensor:EnableThreadedMatMul()
+Tensor:EnableThreadedMatrixDotProduct()
 
 local function load_and_run(model_path, prompt, token_callback)
 	local context_length = 8192
 	local temperature = 0.1
 	local topp = 0.95
-	local max_tokens = 20
+	local max_tokens = 50
 	local gguf = ggf.load_gguf(model_path)
 	assert(gguf.metadata["tokenizer.ggml.model"] == "gpt2")
 	assert(gguf.metadata["tokenizer.ggml.tokens"])
@@ -69,7 +55,21 @@ local function load_and_run(model_path, prompt, token_callback)
 		end)(),
 	}
 
-	local function attention_step(xb, att, q, keyCache, valueCache, l,  position, kvMul, kvDim, headSize, contextLength, sqrtHeadSize, thread_data)
+	local function attention_step(
+		xb,
+		att,
+		q,
+		keyCache,
+		valueCache,
+		l,
+		position,
+		kvMul,
+		kvDim,
+		headSize,
+		contextLength,
+		sqrtHeadSize,
+		thread_data
+	)
 		local h = thread_data
 		local qOffset = h * headSize
 		local attOffset = h * contextLength
@@ -92,26 +92,67 @@ local function load_and_run(model_path, prompt, token_callback)
 		end
 	end
 
-	local function attention(numberOfHeads, xb, att, q, keyCache, valueCache, l,  position, kvMul, kvDim, headSize, contextLength, sqrtHeadSize)
+	local function attention(
+		numberOfHeads,
+		xb,
+		att,
+		q,
+		keyCache,
+		valueCache,
+		l,
+		position,
+		kvMul,
+		kvDim,
+		headSize,
+		contextLength,
+		sqrtHeadSize
+	)
 		for h = 0, numberOfHeads - 1 do
-			attention_step(xb, att, q, keyCache, valueCache, l,  position, kvMul, kvDim, headSize, contextLength, sqrtHeadSize, h)
+			attention_step(
+				xb,
+				att,
+				q,
+				keyCache,
+				valueCache,
+				l,
+				position,
+				kvMul,
+				kvDim,
+				headSize,
+				contextLength,
+				sqrtHeadSize,
+				h
+			)
 		end
 	end
-	
-	local ok, err = pcall(function() 
-		local ffi = require("ffi")
-		local threaded_for = require("threads")
 
-		local run = threaded_for(attention_step, {
-			"@tensor", "@tensor", "@tensor", "@tensor", "@tensor",
-			"double", "double", "double", "double", "double", "double",
-			"double",
-		},32)
-
-		attention = function(numberOfHeads, ...)
-			run(numberOfHeads, ...)
-		end
-	end)
+	if false then -- this doesn't really do much
+		local ok, err = pcall(function()
+			local ffi = require("ffi")
+			local threaded_for = require("threads")
+			local run = threaded_for(
+				attention_step,
+				{
+					"@tensor",
+					"@tensor",
+					"@tensor",
+					"@tensor",
+					"@tensor",
+					"double",
+					"double",
+					"double",
+					"double",
+					"double",
+					"double",
+					"double",
+				},
+				4
+			)
+			attention = function(numberOfHeads, ...)
+				run(numberOfHeads, ...)
+			end
+		end)
+	end
 
 	local function exp(value)
 		return value / (1.0 + math.exp(-value))
@@ -127,9 +168,9 @@ local function load_and_run(model_path, prompt, token_callback)
 
 		for l = 0, c.numberOfLayers - 1 do
 			s.xb:RmsNormInPlace(s.x, w.rms_att_weight[l], dim, c.rmsNormEps)
-			w.wq[l]:MatMul(s.xb, s.q, dim, dim)
-			w.wk[l]:MatMul(s.xb, s.k, kvDim, dim)
-			w.wv[l]:MatMul(s.xb, s.v, kvDim, dim)
+			w.wq[l]:MatrixDotProduct(s.xb, s.q, dim, dim)
+			w.wk[l]:MatrixDotProduct(s.xb, s.k, kvDim, dim)
+			w.wv[l]:MatrixDotProduct(s.xb, s.v, kvDim, dim)
 
 			for i = 0, dim - 1, 2 do
 				local head_dim = i % headSize
@@ -148,24 +189,34 @@ local function load_and_run(model_path, prompt, token_callback)
 
 			s.k:CopyTo(0, s.keyCache[l + 1], position * kvDim, kvDim)
 			s.v:CopyTo(0, s.valueCache[l + 1], position * kvDim, kvDim)
-
-			attention(c.numberOfHeads, s.xb, s.att, s.q, s.keyCache[l + 1], s.valueCache[l + 1], l, position, kvMul, kvDim, headSize, c.contextLength, sqrtHeadSize)
-
-			w.wo[l]:MatMul(s.xb, s.xb2, dim, dim)
+			attention(
+				c.numberOfHeads,
+				s.xb,
+				s.att,
+				s.q,
+				s.keyCache[l + 1],
+				s.valueCache[l + 1],
+				l,
+				position,
+				kvMul,
+				kvDim,
+				headSize,
+				c.contextLength,
+				sqrtHeadSize
+			)
+			w.wo[l]:MatrixDotProduct(s.xb, s.xb2, dim, dim)
 			s.x:AddTensorInPlace(s.xb2)
 			s.xb:RmsNormInPlace(s.x, w.rms_ffn_weight[l], dim, c.rmsNormEps)
-			w.w1[l]:MatMul(s.xb, s.hb, c.hiddenDim, dim)
-			w.w3[l]:MatMul(s.xb, s.hb2, c.hiddenDim, dim)
-
+			w.w1[l]:MatrixDotProduct(s.xb, s.hb, c.hiddenDim, dim)
+			w.w3[l]:MatrixDotProduct(s.xb, s.hb2, c.hiddenDim, dim)
 			s.hb:MapInPlace(0, s.hb.size, exp)
-
 			s.hb:MultiplyTensorInPlace(s.hb2)
-			w.w2[l]:MatMul(s.hb, s.xb, dim, c.hiddenDim)
+			w.w2[l]:MatrixDotProduct(s.hb, s.xb, dim, c.hiddenDim)
 			s.x:AddTensorInPlace(s.xb)
 		end
 
 		s.x:RmsNormInPlace(s.x, w.rms_final_weight, dim, c.rmsNormEps)
-		w.wcls:MatMul(s.x, s.logits, c.vocabularySize, dim)
+		w.wcls:MatrixDotProduct(s.x, s.logits, c.vocabularySize, dim)
 	end
 
 	local tokens = tokenizer.encode(prompt)
@@ -190,8 +241,11 @@ local model_path = ...
 local prompt = [[<|start_header_id|>user<|end_header_id|>
 hello<|eot_id|><|start_header_id|>assistant<|end_header_id|>
 ]]
+profiler.Start()
 
 load_and_run(model_path, prompt, function(token)
 	io.write(token)
 	io.flush()
 end)
+
+profiler.Stop()

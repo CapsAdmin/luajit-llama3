@@ -104,8 +104,12 @@ local function Tokenizer(gguf_tokens, gguf_merges)
 		local out = ""
 		local i = 1
 		while i <= #str do
-			local str, size = reverse_bytemap(str:byte(i), str:byte(i+1))
-			out = out .. string.char(str)
+			local b, size = reverse_bytemap(str:byte(i), str:byte(i+1))
+			if b and b > 0 and b < 256 then
+				out = out .. string.char(b)
+			else
+				out = out .. "*INVALID TOKEN*"
+			end
 			i = i + size
 		end
 		return out

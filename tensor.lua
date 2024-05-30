@@ -61,7 +61,7 @@ do
 
 		if not blob then
 			blob = ffi.cast("float*", ffi.C.malloc(size * 4))
-			ffi.fill(blob, size * 4, 0)
+			--ffi.fill(blob, size * 4, 0)
 			blob_ref = blob
 		end
 
@@ -137,22 +137,23 @@ function Tensor:Dot(thisOffset, that, thatOffset, size)
 end
 
 do
-	function Tensor:MatMul(that, out, dim0, dim1)
+	function Tensor:MatrixDotProduct(that, out, dim0, dim1)
 		for i = 0, dim0 - 1 do
 			out:SetFloat(i, self:Dot(i * dim1, that, 0, dim1))
 		end
 	end
 
-	function Tensor.EnableThreadedMatMul()
+	function Tensor.EnableThreadedMatrixDotProduct()
 		local ok, err = pcall(function()
 
 			local build_parallel_for = require("threads")
 			local parallel_for = build_parallel_for(function(dim1, out, self, that, thread_data)
 				local i = thread_data
 				out:SetFloat(i, self:Dot(i * dim1, that, 0, dim1))
-			end, {"double", "@tensor", "@tensor", "@tensor"}, 32)
-
-			function Tensor:MatMul(that, out, dim0, dim1)
+			end, {"double", "@tensor", "@tensor", "@tensor"}, 64)
+			
+			local done = {}
+			function Tensor:MatrixDotProduct(that, out, dim0, dim1)
 				parallel_for(dim0, dim1, out, self, that)
 			end
 		end)
@@ -351,7 +352,7 @@ do -- some tests
 		assert(expected_dot_product == dot_product)
 	end
 
-	do -- test for MatMul
+	do -- test for MatrixDotProduct
 		local size = 3
 		local t1 = Tensor:F32(size * size)
 		local t2 = Tensor:F32(size * size)
@@ -374,7 +375,7 @@ do -- some tests
 		t2:SetFloat(6, 0)
 		t2:SetFloat(7, 0)
 		t2:SetFloat(8, 1)
-		t1:MatMul(t2, out, size, size)
+		t1:MatrixDotProduct(t2, out, size, size)
 		assert(out:GetFloat(0) == 1)
 		assert(out:GetFloat(1) == 4)
 		assert(out:GetFloat(2) == 7)
