@@ -1,34 +1,32 @@
 local ffi = require("ffi")
+local Blob = require("blob")
 local Tensor = {}
 Tensor.__index = Tensor
 ffi.cdef[[
 	void *malloc( size_t size );
 ]]
 
-local function valid_number(num, self, i)
-	if num and num ~= inf and num ~= ninf and (num >= 0 or num <= 0) then
-		return num
-	end
-
-	error(
-		tostring(self) .. ".blob contains an invalid number at index " .. i .. ": " .. tostring(num)
-	)
-	return num
+function Tensor:F32(size, blob)
+	return self:new(Blob:F32(size, blob))
 end
 
-function Tensor:new(size, blob, blob_ref, get_float, set_float)
+function Tensor:Q4_0(size, blob)
+	return self:new(Blob:Q4_0(size, blob))
+end
+
+function Tensor:new(blob)
 	local t = setmetatable({}, Tensor)
-	assert(type(size) == "number" or type(size) == "cdata") -- ULL
-	assert(type(blob) == "cdata")
-	assert(blob_ref)
-	assert(type(set_float) == "function")
-	assert(type(get_float) == "function")
 	t.blob = blob
-	t.size = tonumber(size)
-	t.SetFloat = set_float
-	t.GetFloat = get_float
-	t.blob_ref = blob_ref -- need to keep this around for gc
+	t.size = blob.size
 	return t
+end
+
+function Tensor:GetFloat(i)
+	return self.blob:GetFloat(i)
+end
+
+function Tensor:SetFloat(i, v)
+	return self.blob:SetFloat(i, v)
 end
 
 function Tensor:SetName(n)
@@ -40,90 +38,6 @@ function Tensor:__tostring()
 	if self.name then return self.name .. "[" .. tostring(self.size) .. "]" end
 
 	return "Tensor[" .. self.size .. "]"
-end
-
-local ggf = require("gguf")
-
-do
-	local function get_float(self, index)
-		return self.blob[index]
-	end
-
-	local function set_float(self, index, val)
-		self.blob[index] = val
-	end
-
-	Tensor.GetF32 = get_float
-	Tensor.SetF32 = set_float
-
-	function Tensor:F32(size, blob)
-		local blob_ref = blob
-
-		if not blob then
-			blob = ffi.cast("float*", ffi.C.malloc(size * 4))
-			--ffi.fill(blob, size * 4, 0)
-			blob_ref = blob
-		end
-
-		return Tensor:new(size, ffi.cast("float *", blob), blob_ref, get_float, set_float)
-	end
-end
-
-do
-	local block_size = ggf.GGMLTypeMap.Q4_0.blockSize
-	local half_block_size = block_size / 2
-	local type_size = ggf.GGMLTypeMap.Q4_0.typeSize
-	local rshift = bit.rshift
-	local band = bit.band
-	local ldexp = math.ldexp
-	local floor = math.floor
-
-	-- f16_to_f32 is not accurate because we don't need to handle nan, inf, etc
-	local function f16_to_f32(bits)
-		local sign = 1 - band(rshift(bits, 15), 0x1) * 2
-		local exponent = band(rshift(bits, 10), 0x1F)
-		local mantissa = band(bits, 0x3FF)
-		return sign * ldexp(mantissa + 1024, exponent - 25)
-	end
-
-	local function get_float(self, index)
-		local block_index = floor(index / block_size)
-		local block_offset = floor(block_index * type_size)
-		local scale = f16_to_f32(self.blob_f16[block_offset / 2])
-		-- Calculate the shift amount using bitwise operations to avoid branches
-		local modIndex = band(index, block_size - 1)
-		local base_offset = block_offset + 2 + band(modIndex, half_block_size - 1)
-		local shift_amount = rshift(modIndex, 4) * 4
-		local quant = band(rshift(self.blob[base_offset], shift_amount), 0x0F)
-		return (quant - 8) * scale
-	end
-
-	local function set_float(self, index, value)
-		assert(index >= 0)
-		assert(index < self.size)
-		error("NYI", 2)
-	end
-
-	Tensor.GetQ4_0 = get_float
-	Tensor.SetQ4_0 = set_float
-
-	function Tensor:Q4_0(size, blob)
-		local blob_ref = blob
-
-		if not blob then
-			blob = ffi.cast("uint8_t*", ffi.C.malloc(size))
-			ffi.fill(blob, size, 0)
-			blob_ref = blob
-		end
-
-		local t = Tensor:new(size, ffi.cast("uint8_t *", blob), blob_ref, get_float, set_float)
-		t.blob_f16 = ffi.cast("uint16_t*", t.blob)
-		return t
-	end
-end
-
-function Tensor:GetFloatVector(index, value)
-	error("NYI")
 end
 
 function Tensor:Dot(thisOffset, that, thatOffset, size)
@@ -302,50 +216,12 @@ do
 end
 
 do
-	local ctype = ffi.typeof([[
-		struct {
-			int size;
-			int type;
-			void *blob; 
-		}
-	]])
-	local ctype_ptr = ffi.typeof("$*", ctype)
-	local ctype_box = ffi.typeof("$[1]", ctype)
-
 	function Tensor:ThreadSerialize()
-		local ct = ctype(
-			self.size,
-			self.GetFloat == Tensor.GetF32 and 0 or 1,
-			ffi.cast("void *", self.blob)
-		)
-		return ct
+		return self.blob:ThreadSerialize()
 	end
 
 	function Tensor:ThreadDeserialize(ptr)
-		local data = ffi.cast(ctype_ptr, ptr)
-
-		if data.type == 0 then
-			return setmetatable(
-				{
-					size = data.size,
-					blob = ffi.cast("float*", data.blob),
-					GetFloat = Tensor.GetF32,
-					SetFloat = Tensor.SetF32,
-				},
-				Tensor
-			)
-		else
-			return setmetatable(
-				{
-					size = data.size,
-					blob = ffi.cast("uint8_t*", data.blob),
-					blob_f16 = ffi.cast("uint16_t*", data.blob),
-					GetFloat = Tensor.GetQ4_0,
-					SetFloat = Tensor.SetQ4_0,
-				},
-				Tensor
-			)
-		end
+		return Tensor:new(Blob:ThreadDeserialize(ptr))
 	end
 end
 
