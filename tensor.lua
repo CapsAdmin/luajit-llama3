@@ -40,24 +40,24 @@ function Tensor:__tostring()
 	return "Tensor[" .. self.size .. "]"
 end
 
-function Tensor:Dot(thisOffset, that, thatOffset, size)
-	local result = 0
-
-	for j = 0, size - 1 do
-		result = result + self:GetFloat(thisOffset + j) * that:GetFloat(thatOffset + j)
+do
+	function Tensor:Dot(thisOffset, that, thatOffset, size)
+		local result = 0
+	
+		for j = 0, size - 1 do
+			result = result + self:GetFloat(thisOffset + j) * that:GetFloat(thatOffset + j)
+		end
+	
+		return result
 	end
 
-	return result
-end
-
-do
-	function Tensor:MatrixDotProduct(that, out, dim0, dim1)
+	function Tensor:MatrixVectorMultiply(that, out, dim0, dim1)
 		for i = 0, dim0 - 1 do
 			out:SetFloat(i, self:Dot(i * dim1, that, 0, dim1))
 		end
 	end
 
-	function Tensor.EnableThreadedMatrixDotProduct() 
+	function Tensor.EnableThreadedMatrixVectorMultiply() 
 		local ok, err = pcall(function()
 
 			local build_parallel_for = require("threads")
@@ -67,7 +67,7 @@ do
 			end, {"double", "@tensor", "@tensor", "@tensor"}, 64)
 			
 			local done = {}
-			function Tensor:MatrixDotProduct(that, out, dim0, dim1)
+			function Tensor:MatrixVectorMultiply(that, out, dim0, dim1)
 				parallel_for(dim0, dim1, out, self, that)
 			end
 		end)

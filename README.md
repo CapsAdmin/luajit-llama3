@@ -1,6 +1,6 @@
 Llama3 inference with luajit using the Q4_0 model variant.
 
-This is very slow and 99% of the time is being spent in Tensor.MatrixDotProduct, which is already optionally using pthreads to chunk the outter loop to multiple threads/lua_State's of the function. 
+This is very slow and 99% of the time is being spent in Tensor.MatrixVectorMultiply, which is already optionally using pthreads to chunk the outter loop to multiple threads/lua_State's of the function. 
 
 On my system (Ryzen 9 5950X 16-Core) I get around 0.5 t/s. Without pthreads it seems to be something like 0.001 t/s
 

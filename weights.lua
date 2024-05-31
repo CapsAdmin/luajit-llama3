@@ -155,7 +155,7 @@ local function Weights(tensors, numberOfLayers)
 			local name = "blk." .. i .. ".attn_norm.weight"
 			return tensors[name], name
 		end), -- (layer, dim) rmsnorm weights
-		-- weights for MatrixDotProducts
+		-- weights for MatrixVectorMultiplys
 		wq = loadTensorArray(numberOfLayers, function(i)
 			local name = "blk." .. i .. ".attn_q.weight"
 			return tensors[name], name

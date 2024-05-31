@@ -1,8 +1,8 @@
 local Tensor = require("tensor")
-Tensor:EnableThreadedMatrixDotProduct()
+Tensor:EnableThreadedMatrixVectorMultiply()
 local measure = require("debug.measure")
 
-function Tensor:MatrixDotProduct(that, out, dim0, dim1)
+function Tensor:MatrixVectorMultiply(that, out, dim0, dim1)
 	for i = 0, dim0 - 1 do
 		local result = 0
 
@@ -56,10 +56,10 @@ local total = 0
 
 for i = 1, 20 do
 	if i > 2 then -- jit warmup
-	measure("MatrixDotProduct") end
+	measure("MatrixVectorMultiply") end
 
 	for k, v in ipairs(variants) do
-		v.a:MatrixDotProduct(v.b, v.out, v.dim0, v.dim1)
+		v.a:MatrixVectorMultiply(v.b, v.out, v.dim0, v.dim1)
 	end
 
 	if i > 2 then total = total + measure() end

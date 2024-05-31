@@ -49,7 +49,7 @@ do -- some tensor tests
         assert(expected_dot_product == dot_product)
     end
 
-    do -- test for MatrixDotProduct
+    do -- test for MatrixVectorMultiply
         local size = 3
         local t1 = Tensor:F32(size * size)
         local t2 = Tensor:F32(size * size)
@@ -72,7 +72,7 @@ do -- some tensor tests
         t2:SetFloat(6, 0)
         t2:SetFloat(7, 0)
         t2:SetFloat(8, 1)
-        t1:MatrixDotProduct(t2, out, size, size)
+        t1:MatrixVectorMultiply(t2, out, size, size)
         assert(out:GetFloat(0) == 1)
         assert(out:GetFloat(1) == 4)
         assert(out:GetFloat(2) == 7)

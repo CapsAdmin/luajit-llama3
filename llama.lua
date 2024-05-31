@@ -7,7 +7,7 @@ local Configuration = require("configuration")
 local Weights = require("weights")
 local Tensor = require("tensor")
 local Sampler = require("topp_sampler")
-Tensor:EnableThreadedMatrixDotProduct()
+Tensor:EnableThreadedMatrixVectorMultiply()
 
 local function load_and_run(model_path, prompt, token_callback)
 	local context_length = 512
@@ -73,9 +73,9 @@ local function load_and_run(model_path, prompt, token_callback)
 			local valueCache = state.valueCache[l]
 
 			state.xb:RmsNormInPlace(state.x, weights.rms_att_weight[l], dim, config.rmsNormEps)
-			weights.wq[l]:MatrixDotProduct(state.xb, state.q, dim, dim)
-			weights.wk[l]:MatrixDotProduct(state.xb, state.k, kvDim, dim)
-			weights.wv[l]:MatrixDotProduct(state.xb, state.v, kvDim, dim)
+			weights.wq[l]:MatrixVectorMultiply(state.xb, state.q, dim, dim)
+			weights.wk[l]:MatrixVectorMultiply(state.xb, state.k, kvDim, dim)
+			weights.wv[l]:MatrixVectorMultiply(state.xb, state.v, kvDim, dim)
 
 			for i = 0, dim - 1, 2 do
 				local head_dim = i % headSize
@@ -117,19 +117,19 @@ local function load_and_run(model_path, prompt, token_callback)
 				end
 			end
 
-			weights.wo[l]:MatrixDotProduct(state.xb, state.xb2, dim, dim)
+			weights.wo[l]:MatrixVectorMultiply(state.xb, state.xb2, dim, dim)
 			state.x:AddTensorInPlace(state.xb2)
 			state.xb:RmsNormInPlace(state.x, weights.rms_ffn_weight[l], dim, config.rmsNormEps)
-			weights.w1[l]:MatrixDotProduct(state.xb, state.hb, config.hiddenDim, dim)
-			weights.w3[l]:MatrixDotProduct(state.xb, state.hb2, config.hiddenDim, dim)
+			weights.w1[l]:MatrixVectorMultiply(state.xb, state.hb, config.hiddenDim, dim)
+			weights.w3[l]:MatrixVectorMultiply(state.xb, state.hb2, config.hiddenDim, dim)
 			state.hb:MapInPlace(0, state.hb.size, exp)
 			state.hb:MultiplyTensorInPlace(state.hb2)
-			weights.w2[l]:MatrixDotProduct(state.hb, state.xb, dim, config.hiddenDim)
+			weights.w2[l]:MatrixVectorMultiply(state.hb, state.xb, dim, config.hiddenDim)
 			state.x:AddTensorInPlace(state.xb)
 		end
 
 		state.x:RmsNormInPlace(state.x, weights.rms_final_weight, dim, config.rmsNormEps)
-		weights.wcls:MatrixDotProduct(state.x, state.logits, config.vocabularySize, dim)
+		weights.wcls:MatrixVectorMultiply(state.x, state.logits, config.vocabularySize, dim)
 	end
 
 	local token = tokenizer.encode("<|begin_of_text|>")[1]
