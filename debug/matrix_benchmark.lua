@@ -59,7 +59,7 @@ for i = 1, 20 do
 	measure("MatrixDotProduct") end
 
 	for k, v in ipairs(variants) do
-		v.a:MatrixDotProductOld(v.b, v.out, v.dim0, v.dim1)
+		v.a:MatrixDotProduct(v.b, v.out, v.dim0, v.dim1)
 	end
 
 	if i > 2 then total = total + measure() end

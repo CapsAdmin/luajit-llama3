@@ -10,7 +10,7 @@ local Sampler = require("topp_sampler")
 Tensor:EnableThreadedMatrixDotProduct()
 
 local function load_and_run(model_path, prompt, token_callback)
-	local context_length = 8192
+	local context_length = 512
 	local temperature = 0.1
 	local topp = 0.95
 	local max_tokens = 50

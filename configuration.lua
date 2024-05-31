@@ -36,8 +36,6 @@ local function Configuration(context_length, metadata, token_size)
 
     return {
         tokenizer = tokenizer,
-        context_length = context_length,
-        model_context_length = model_context_length,
         dim = dim,
         hiddenDim = hiddenDim,
         numberOfLayers = numberOfLayers,
