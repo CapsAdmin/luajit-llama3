@@ -13,6 +13,11 @@ function Blob:GetFloat(index)
 	error("NYI", 2)
 end
 
+function Blob:Fill(num)
+	ffi.fill(self.blob, self.byte_size, num)
+	return self
+end
+
 function Blob:F32(size, blob)
 	blob = blob or ffi.cast("float*", ffi.C.malloc(size * 4))
 	blob = ffi.cast("float*", blob)
@@ -21,6 +26,7 @@ function Blob:F32(size, blob)
 			type = "F32",
 			blob = blob,
 			size = tonumber(size),
+			byte_size = tonumber(size * 4),
 			SetFloat = function(s, index, val)
 				blob[index] = val
 			end,
@@ -60,6 +66,7 @@ do
 				type = "Q4_0",
 				blob = blob,
 				size = tonumber(size),
+				byte_size = tonumber(size * 2),
 				blob_f16 = blob_f16,
 				GetFloat = function(s, index)
 					local block_index = rshift(index, 5)

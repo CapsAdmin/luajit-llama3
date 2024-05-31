@@ -15,7 +15,7 @@ int cuGetErrorString(int error, const char **str);
 
 
 const char* nvrtcGetErrorString(nvrtcResult result);
-nvrtcResult nvrtcCreateProgram(nvrtcProgram* prog, const char* src, const char* name,
+nvrtcResult nvrtcCreateProgram(nvrtcProgram* prog, const char* src, const char* name, 
                                int numHeaders, const char** headers, const char** includeNames);
 nvrtcResult nvrtcDestroyProgram(nvrtcProgram* prog);
 nvrtcResult nvrtcCompileProgram(nvrtcProgram prog, int numOptions, const char** options);
