@@ -7,7 +7,7 @@ local Configuration = require("configuration")
 local Weights = require("weights")
 local Tensor = require("tensor")
 local Sampler = require("topp_sampler")
-Tensor:EnableThreadedMatrixVectorMultiply()
+require("tensor_compute_ext").use_pthreads()
 
 local function load_and_run(model_path, prompt, token_callback)
 	local context_length = 512

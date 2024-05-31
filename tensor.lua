@@ -56,24 +56,6 @@ do
 			out:SetFloat(i, self:Dot(i * dim1, that, 0, dim1))
 		end
 	end
-
-	function Tensor.EnableThreadedMatrixVectorMultiply() 
-		local ok, err = pcall(function()
-
-			local build_parallel_for = require("threads")
-			local parallel_for = build_parallel_for(function(dim1, out, self, that, thread_data)
-				local i = thread_data
-				out:SetFloat(i, self:Dot(i * dim1, that, 0, dim1))
-			end, {"double", "@tensor", "@tensor", "@tensor"}, 64)
-			
-			local done = {}
-			function Tensor:MatrixVectorMultiply(that, out, dim0, dim1)
-				parallel_for(dim0, dim1, out, self, that)
-			end
-		end)
-
-		if not ok then print("threading can't be enabled: " .. err) end
-	end
 end
 
 do

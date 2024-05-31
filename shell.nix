@@ -36,9 +36,5 @@ mkShell {
     ]}:$LD_LIBRARY_PATH"
     export PATH=${pkgs.cudaPackages.cudatoolkit}/bin:$PATH
     export CUDA_HOME=${pkgs.cudaPackages.cudatoolkit}
-
-    luajit -e "require('ffi').load('libnvrtc-builtins.so')"
-
-    luajit check_cuda.lua
   '';
 }

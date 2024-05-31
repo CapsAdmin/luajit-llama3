@@ -1,4 +1,5 @@
 local ffi = require("ffi")
+local gpu = {}
 
 ffi.cdef[[
 typedef struct CUctx_st *CUcontext;
@@ -84,7 +85,10 @@ local nvrtc = setmetatable({}, {
 })
 
 
-local function source_to_ptx(source)
+gpu.cuda = cuda
+gpu.nvrtc = nvrtc
+
+function gpu.source_to_ptx(source)
     local prog = ffi.new("nvrtcProgram[1]")
     nvrtc.nvrtcCreateProgram(prog, source, nil, 0, nil, nil)
     _G.PROG = prog -- for debug
@@ -99,7 +103,7 @@ local function source_to_ptx(source)
     return ffi.string(ptx, ptxSize[0])
 end
 
-local function compile_ptx(ptx, name)
+function gpu.compile_ptx(ptx, name)
     local module = ffi.new("CUmodule[1]")
     cuda.cuModuleLoadData(module, ptx)
 
@@ -110,7 +114,7 @@ local function compile_ptx(ptx, name)
     return kernel[0]
 end
 
-local function create_context()
+function gpu.create_context()
     local device = ffi.new("int[1]")
     cuda.cuDeviceGetCount(device)
     assert(device[0] > 0, "No CUDA devices found")
@@ -123,27 +127,7 @@ local function create_context()
     return context[0]
 end
 
-local function test_kernel()
-    cuda.cuInit(0)
-
-    local context = create_context()
-    cuda.cuCtxSetCurrent(context)
-
-    local kernel = compile_ptx(source_to_ptx([[
-        extern "C" __global__ void test() {
-            // Does nothing
-        }
-    ]]), "test")
-
-    local args = ffi.new("void*[1]", {})
-    cuda.cuLaunchKernel(kernel, 1, 1, 1, 1, 1, 1, 0, nil, args, nil)
-
-    cuda.cuCtxDestroy(context)
-end
-
-test_kernel()
-
-local function gpu_allocate(size, buffer)
+function gpu.allocate(size, buffer)
     local ptr = ffi.new("void*[1]")
     cuda.cuMemAlloc(ptr, size)
     
@@ -154,134 +138,4 @@ local function gpu_allocate(size, buffer)
     return ptr
 end
 
-local function runKernel(ptx, name, a, b, out, sx, sy, numBlocks, threadsPerBlock)
-    cuda.cuInit(0)
-
-    local context = create_context()
-    cuda.cuCtxSetCurrent(context)
-
-    local kernel = compile_ptx(ptx, name)
-
-    local F32_SIZE = 4
-
-    local device_a = gpu_allocate(a.size*F32_SIZE, a.blob.blob)
-    local device_b = gpu_allocate(b.size*F32_SIZE, b.blob.blob)
-
-    local device_out = gpu_allocate(out.size*F32_SIZE)
-
-    local box_sx = ffi.new("int[1]", sx)
-    local box_sy = ffi.new("int[1]", sy)
-    local args = ffi.new("void*[5]", device_a, device_b, device_out, box_sx, box_sy)
-    cuda.cuLaunchKernel(
-        kernel, 
-        threadsPerBlock, 1, 1, 
-        numBlocks, 1, 1, 
-
-        0, nil, args, nil
-    )
-
-    cuda.cuMemcpyDtoH(out.blob.blob, device_out[0], out.size*F32_SIZE)
-
-    cuda.cuMemFree(device_a[0])
-    cuda.cuMemFree(device_b[0])
-    cuda.cuMemFree(device_out[0])
-
-    cuda.cuCtxDestroy(context)
-end
-
-
-package.path = './?.lua;' .. package.path
-local Tensor = require("tensor")
-
-local variants = {
-	{
-		out = Tensor:F32(4096),
-		a = Tensor:F32(16777216),
-		b = Tensor:F32(4096),
-		dim0 = 4096,
-		dim1 = 4096,
-	},
-	{
-		out = Tensor:F32(4096),
-		a = Tensor:F32(4194304),
-		b = Tensor:F32(4096),
-		dim0 = 1024,
-		dim1 = 4096,
-	},
-	{
-		out = Tensor:F32(14336),
-		a = Tensor:F32(58720256),
-		b = Tensor:F32(4096),
-		dim0 = 14336,
-		dim1 = 4096,
-	},
-	{
-		out = Tensor:F32(4096),
-		a = Tensor:F32(58720256),
-		b = Tensor:F32(14336),
-		dim0 = 4096,
-		dim1 = 14336,
-	},
-	{
-		out = Tensor:F32(128256),
-		a = Tensor:F32(525336576),
-		b = Tensor:F32(4096),
-		dim0 = 128256,
-		dim1 = 4096,
-	},
-}
-
-math.randomseed(1337)
-for k, v in ipairs(variants) do
-    v.a:MapInPlace(0, v.a.size, function(v, i) return math.random()*2-1 end)
-    v.b:MapInPlace(0, v.b.size, function(v, i) return math.random()*2-1 end)
-end
-
-for k, v in ipairs(variants) do
-    v.a:MatrixVectorMultiply(v.b, v.out, v.dim0, v.dim1)
-    local out = Tensor:F32(v.out.size)
-    
-    local threadsPerBlock = 256
-    local numBlocks = math.ceil(v.dim0 / threadsPerBlock)
-    runKernel(source_to_ptx([[
-        extern "C" __global__ void MatrixVectorMultiply(float* self, float* that, float* out, int dim0, int dim1) {
-            int row = blockIdx.x * blockDim.x + threadIdx.x;
-            if (row < dim0) {  // Ensure we do not go out of bounds
-                float result = 0.0f;
-                for (int j = 0; j < dim1; j++) {
-                    result += self[row * dim1 + j] * that[j];
-                }
-                out[row] = result;
-            }
-        }
-    ]]), "MatrixVectorMultiply", v.a, v.b, out, v.dim0, v.dim1, numBlocks, threadsPerBlock)
-
-
-    for i = 0, out.size - 1 do
-        local a, b = out:GetFloat(i), v.out:GetFloat(i)
-
-        if (a - b) > 0.01 then
-            print(a, " ~= ", b, (a - b))
-            break
-        end
-    end
-end
-
-if false then
-    local measure = require("debug.measure")
-
-    local total = 0
-
-    for i = 1, 5 do
-        if i > 2 then -- jit warmup
-        measure("MatrixVectorMultiply") end
-
-        for k, v in ipairs(variants) do
-            v.a:MatrixVectorMultiply(v.b, v.out, v.dim0, v.dim1)
-        end
-
-        if i > 2 then total = total + measure() end
-    end
-
-    print("avg time: ", total / 20)
-end
+return gpu

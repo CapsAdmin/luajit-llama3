@@ -1,26 +1,17 @@
 local ffi = require("ffi")
 
--- Define initialization functions for the CUDA Runtime API
 local function initialize_cudart()
     local lib = ffi.load("libcudart.so")
-    -- Example initialization function for cuda_cudart
     ffi.cdef[[
-        typedef enum cudaError_enum {
-            cudaSuccess = 0,
-            cudaErrorMissingConfiguration = 1,
-            cudaErrorMemoryAllocation = 2,
-            // ... other error codes ...
-        } cudaError_t;
-
-        const char* cudaGetErrorString(cudaError_t error);
-        cudaError_t cudaFree(void* devPtr);
+        const char* cudaGetErrorString(int error);
+        int cudaFree(void* devPtr);
         int cudaDriverGetVersion(int *major);
         int cudaRuntimeGetVersion(int *major);
-        cudaError_t cudaMalloc(void **devPtr, size_t size);
+        int cudaMalloc(void **devPtr, size_t size);
     ]]
     
     local error_code = lib.cudaFree(nil)
-    if error_code ~= ffi.C.cudaSuccess then
+    if error_code ~= 0 then
         local error_string = ffi.string(lib.cudaGetErrorString(error_code))
         error("cudaFree failed with error: " .. error_string)
     end
@@ -147,7 +138,7 @@ local function initialize_cuda(lib)
     local lib = ffi.load("libcuda.so")
     ffi.cdef[[
         int cuInit(unsigned int Flags);
-        int cuGetErrorString(cudaError_t error, const char **str);
+        int cuGetErrorString(int error, const char **str);
         typedef struct CUctx_st *CUcontext;
         int cuCtxGetCurrent ( CUcontext* pctx );
     ]]
@@ -169,7 +160,6 @@ local function initialize_cuda(lib)
     end
 end
 
--- Load and initialize libraries
 initialize_cudart()
 initialize_nvrtc()
 initialize_cuda()

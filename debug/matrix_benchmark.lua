@@ -1,5 +1,5 @@
 local Tensor = require("tensor")
-Tensor:EnableThreadedMatrixVectorMultiply()
+require("tensor_compute_ext").use_pthreads()
 local measure = require("debug.measure")
 
 function Tensor:MatrixVectorMultiply(that, out, dim0, dim1)

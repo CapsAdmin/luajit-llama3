@@ -122,6 +122,7 @@ local function threaded_for(encode_code, lua_header_code, lua_code, thread_count
 	for i = 1, thread_count do
 		local func_ptr = load_thread(
 			[==[
+				package.path = './?.lua;' .. package.path
 				local ffi = require("ffi")
 				local udataptr = ffi.typeof([[]==] .. struct .. [==[*]])
 
