@@ -61,12 +61,17 @@ do
 		blob = blob or ffi.cast("uint8_t*", ffi.C.malloc(size))
 		blob = ffi.cast("uint8_t*", blob)
 		local blob_f16 = ffi.cast("uint16_t*", blob)
+		
+		local byte_size = size * type_size
+		assert(byte_size % block_size == 0, "Total size must be a multiple of the block size")
+		byte_size = byte_size / block_size
+
 		return setmetatable(
 			{
 				type = "Q4_0",
 				blob = blob,
 				size = tonumber(size),
-				byte_size = tonumber(size * 2),
+				byte_size = tonumber(byte_size),
 				blob_f16 = blob_f16,
 				GetFloat = function(s, index)
 					local block_index = rshift(index, 5)

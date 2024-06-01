@@ -1,41 +1,19 @@
 local ffi = require("ffi")
-local gpu = require("gpu_cuda")
 local Tensor = require("tensor")
+require("tensor_compute_ext").use_cuda()
 
-local function runKernel(ptx, name, a, b, out, sx, sy, numBlocks, threadsPerBlock)
-    gpu.cuda.cuInit(0)
+function Tensor:MatrixVectorMultiplyCPU(that, out, dim0, dim1)
+	for i = 0, dim0 - 1 do
+		local result = 0
 
-    local context = gpu.create_context()
-    gpu.cuda.cuCtxSetCurrent(context)
+		for j = 0, dim1 - 1 do
+			result = result + self:GetFloat(i * dim1 + j) * that:GetFloat(j)
+		end
 
-    local kernel = gpu.compile_ptx(ptx, name)
-
-    local F32_SIZE = 4
-
-    local device_a = gpu.allocate(a.size*F32_SIZE, a.blob.blob)
-    local device_b = gpu.allocate(b.size*F32_SIZE, b.blob.blob)
-
-    local device_out = gpu.allocate(out.size*F32_SIZE)
-
-    local box_sx = ffi.new("int[1]", sx)
-    local box_sy = ffi.new("int[1]", sy)
-    local args = ffi.new("void*[5]", device_a, device_b, device_out, box_sx, box_sy)
-    gpu.cuda.cuLaunchKernel(
-        kernel, 
-        threadsPerBlock, 1, 1, 
-        numBlocks, 1, 1, 
-
-        0, nil, args, nil
-    )
-
-    gpu.cuda.cuMemcpyDtoH(out.blob.blob, device_out[0], out.size*F32_SIZE)
-
-    gpu.cuda.cuMemFree(device_a[0])
-    gpu.cuda.cuMemFree(device_b[0])
-    gpu.cuda.cuMemFree(device_out[0])
-
-    gpu.cuda.cuCtxDestroy(context)
+		out:SetFloat(i, result)
+	end
 end
+
 
 local variants = {
 	{
@@ -79,34 +57,27 @@ math.randomseed(1337)
 for k, v in ipairs(variants) do
     v.a:MapInPlace(0, v.a.size, function(v, i) return math.random()*2-1 end)
     v.b:MapInPlace(0, v.b.size, function(v, i) return math.random()*2-1 end)
+    v.out.blob:Fill(0)
 end
 
 for k, v in ipairs(variants) do
-    v.a:MatrixVectorMultiply(v.b, v.out, v.dim0, v.dim1)
+    v.a:MatrixVectorMultiplyCPU(v.b, v.out, v.dim0, v.dim1)
+    local expected = v.out
     local out = Tensor:F32(v.out.size)
+    out.blob:Fill(0)
     
-    local threadsPerBlock = 256
-    local numBlocks = math.ceil(v.dim0 / threadsPerBlock)
-    runKernel(gpu.source_to_ptx([[
-        extern "C" __global__ void MatrixVectorMultiply(float* self, float* that, float* out, int dim0, int dim1) {
-            int row = blockIdx.x * blockDim.x + threadIdx.x;
-            if (row < dim0) {  // Ensure we do not go out of bounds
-                float result = 0.0f;
-                for (int j = 0; j < dim1; j++) {
-                    result += self[row * dim1 + j] * that[j];
-                }
-                out[row] = result;
-            }
-        }
-    ]]), "MatrixVectorMultiply", v.a, v.b, out, v.dim0, v.dim1, numBlocks, threadsPerBlock)
+    v.a:MatrixVectorMultiply(v.b, out, v.dim0, v.dim1)
+    local fail = false
+    for i = 0, v.dim0 - 1 do
+        local a = expected:GetFloat(i)
+        local b = out:GetFloat(i)
 
-
-    for i = 0, out.size - 1 do
-        local a, b = out:GetFloat(i), v.out:GetFloat(i)
-
-        if (a - b) > 0.01 then
-            print(a, " ~= ", b, (a - b))
-            break
+        if (b - a) > 0.01 then
+            print(v.a, "failed at index", i)
+            print("expected " .. a .. " got " .. b)
+            print("diff: " .. (a - b))
+            fail = true
         end
     end
+    if fail then break end
 end

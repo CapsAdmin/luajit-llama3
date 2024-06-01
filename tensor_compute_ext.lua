@@ -47,12 +47,12 @@ local function use_cuda()
             return (quant - 8) * scale;
         }
 
-        extern "C" __global__ void kernel_f32_q4_0_f32(const unsigned char *self, float* that, float* out, int dim0, int dim1) {
+        extern "C" __global__ void kernel_f32_q4_0_f32(const unsigned char *a, float* b, float* out, int dim0, int dim1) {
             int row = blockIdx.x * blockDim.x + threadIdx.x;
             if (row < dim0) { 
                 float result = 0.0f;
                 for (int j = 0; j < dim1; j++) {
-                    result += get_float(self, row * dim1 + j) * that[j];
+                    result += get_float(a, row * dim1 + j) * b[j];
                 }
                 out[row] = result;
             }
@@ -61,12 +61,12 @@ local function use_cuda()
 
 
     local kernel_f32_f32_f32 = gpu.compile_ptx(gpu.source_to_ptx([[
-        extern "C" __global__ void kernel_f32_f32_f32(float *self, float* that, float* out, int dim0, int dim1) {
+        extern "C" __global__ void kernel_f32_f32_f32(float *a, float* b, float* out, int dim0, int dim1) {
             int row = blockIdx.x * blockDim.x + threadIdx.x;
             if (row < dim0) { 
                 float result = 0.0f;
                 for (int j = 0; j < dim1; j++) {
-                    result += self[row * dim1 + j] * that[j];
+                    result += a[row * dim1 + j] * b[j];
                 }
                 out[row] = result;
             }
@@ -90,7 +90,7 @@ local function use_cuda()
             return cache[key][size]
         end
 
-        local function optimalThreadsPerBlock(dim0)
+        local function optimal_threads_per_block(dim0)
             local baseBlockSize = 256  -- Starting point for block size
             if dim0 < 512 then
                 return 128  -- Use smaller blocks for small dimensions
@@ -103,26 +103,26 @@ local function use_cuda()
 
         local measure = require("debug.measure")
 
-        local function run_kernel(kernel, self, that, out, dim0, dim1)
+        local function run_kernel(kernel, a, b, out, dim0, dim1)
 
-            local self_gpu = cached_gpu_allocate("self", self.byte_size)
-            local that_gpu = cached_gpu_allocate("that", that.byte_size)
+            local a_gpu = cached_gpu_allocate("a", a.byte_size)
+            local b_gpu = cached_gpu_allocate("b", b.byte_size)
             local out_gpu = cached_gpu_allocate("out", out.byte_size)
 
-            gpu.cuda.cuMemcpyHtoD(self_gpu[0], self.blob, self.byte_size)
-            gpu.cuda.cuMemcpyHtoD(that_gpu[0], that.blob, that.byte_size)
+            gpu.cuda.cuMemcpyHtoD(a_gpu[0], a.blob, a.byte_size)
+            gpu.cuda.cuMemcpyHtoD(b_gpu[0], b.blob, b.byte_size)
                                 
-            local threadsPerBlock = optimalThreadsPerBlock(dim0)
-            local numBlocks = math.ceil(dim0 / threadsPerBlock)
+            local thread_count = 1024
+            local block_count = math.ceil((dim0 + thread_count - 1) / thread_count)
 
-            local box_sx = ffi.new("int[1]", dim0)
-            local box_sy = ffi.new("int[1]", dim1)
-            local args = ffi.new("void*[5]", self_gpu, that_gpu, out_gpu, box_sx, box_sy)
+            local box_dim0 = ffi.new("int[1]", dim0)
+            local box_dim1 = ffi.new("int[1]", dim1)
+            local args = ffi.new("void*[5]", a_gpu, b_gpu, out_gpu, box_dim0, box_dim1)
             
             gpu.cuda.cuLaunchKernel(
                 kernel, 
-                threadsPerBlock, 1, 1, 
-                numBlocks, 1, 1, 
+                thread_count, 1, 1, 
+                block_count, 1, 1, 
                 0, nil, args, nil
             )
 
@@ -131,28 +131,13 @@ local function use_cuda()
 
         Tensor.MatrixVectorMultiplyCPU = Tensor.MatrixVectorMultiply
 
-        function Tensor:MatrixVectorMultiply(that, out, dim0, dim1)
-            self:MatrixVectorMultiplyCPU(that, out, dim0, dim1)
-            local expected = out
-            local out = Tensor:F32(out.size)
-            
-            if self.blob.type == "Q4_0" and that.blob.type == "F32" and out.blob.type == "F32" then
-                run_kernel(kernel_f32_q4_0_f32, self.blob, that.blob, out.blob, dim0, dim1)
-            elseif self.blob.type == "F32" and that.blob.type == "F32" and out.blob.type == "F32" then
-                run_kernel(kernel_f32_f32_f32, self.blob, that.blob, out.blob, dim0, dim1)
+        function Tensor.MatrixVectorMultiply(a, b, out, dim0, dim1)
+            if a.blob.type == "Q4_0" and b.blob.type == "F32" and out.blob.type == "F32" then
+                run_kernel(kernel_f32_q4_0_f32, a.blob, b.blob, out.blob, dim0, dim1)
+            elseif a.blob.type == "F32" and b.blob.type == "F32" and out.blob.type == "F32" then
+                run_kernel(kernel_f32_f32_f32, a.blob, b.blob, out.blob, dim0, dim1)
             else
                 error("NYI")
-            end
-
-            for i = 0, out.size - 1 do
-                local a, b = out:GetFloat(i), expected:GetFloat(i)
-        
-                if (a - b) > 0.01 then
-                    print(self, "failed at index", i)
-                    print(a, " ~= ", b, (a - b))
-                    error("")
-                    break
-                end
             end
         end
     end
