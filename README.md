@@ -1,10 +1,11 @@
 Llama3 inference with luajit using the Q4_0 model variant.
 
-This is very slow and 99% of the time is being spent in Tensor.MatrixVectorMultiply, which is already optionally using pthreads to chunk the outter loop to multiple threads/lua_State's of the function. 
+99% of the time is being spent in Tensor.MatrixVectorMultiply. There is a pthreads and a cuda variant, though both are not optimal. The cuda version probably spends most of the time uploading tensors, and the pthreads version is doing it in multiple lua states.
 
-On my system (Ryzen 9 5950X 16-Core) I get around 0.5 t/s. Without pthreads it seems to be something like 0.001 t/s
+It would be cool to make the pure luajit version faster, but I'm not really sure how.
 
-I'm out of ideas on how to make this faster using only luajit.
+To try the cuda version, change use_pthreads() in llama.lua to use_cuda(). It depends on libnvrtc for compiling kernels and libcuda for everything else.
+
 
 ```
 luajit llama.lua /home/caps/projects/llama3.java/Meta-Llama-3-8B-Instruct-Q4_0.gguf
