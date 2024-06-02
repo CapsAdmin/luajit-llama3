@@ -14,6 +14,8 @@ ffi.cdef[[
 
     int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start_routine)(void *), void *arg);
     int pthread_join(pthread_t thread, void **value_ptr );
+
+	long sysconf(int name);
 ]]
 local LUA_GLOBALSINDEX = -10002
 ffi.cdef[[
@@ -30,6 +32,13 @@ ffi.cdef[[
     const char *lua_tolstring(lua_State *L, int index, size_t *len);
     ptrdiff_t lua_tointeger(lua_State *L, int index);
 ]]
+
+local function get_cpu_threads()
+	if ffi.os == "OSX" then
+		return tonumber(ffi.C.sysconf(58))
+	end
+	return tonumber(ffi.C.sysconf(83))
+end
 
 local function create_lua_state()
 	local L = assert(ffi.C.luaL_newstate())
@@ -244,4 +253,7 @@ local function threaded_for2(callback, ctypes, thread_count)
 	end
 end
 
-return threaded_for2
+return {
+	get_cpu_threads = get_cpu_threads,
+	threaded_for = threaded_for2,
+}

@@ -1,15 +1,15 @@
 local Tensor = require("tensor")
 
 local function use_pthreads()
-    local build_parallel_for = require("compute.cpu_pthreads")
-    local parallel_for = build_parallel_for(function(dim1, out, self, that, thread_data)	
+    local pthreads = require("compute.cpu_pthreads")
+    local threaded_for = pthreads.threaded_for(function(dim1, out, self, that, thread_data)	
         local i = thread_data
         out:SetFloat(i, self:Dot(i * dim1, that, 0, dim1))
-    end, {"double", "@tensor", "@tensor", "@tensor"}, 64)
+    end, {"double", "@tensor", "@tensor", "@tensor"}, pthreads.get_cpu_threads())
     
     local done = {}
     function Tensor:MatrixVectorMultiply(that, out, dim0, dim1)
-        parallel_for(dim0, dim1, out, self, that)
+        threaded_for(dim0, dim1, out, self, that)
     end
 end
 
