@@ -27,6 +27,7 @@ function Blob:F32(size, blob)
 			blob = blob,
 			size = tonumber(size),
 			byte_size = tonumber(size * 4),
+			byte_stride = 4,
 			SetFloat = function(s, index, val)
 				blob[index] = val
 			end,
@@ -35,7 +36,7 @@ function Blob:F32(size, blob)
 			end,
 		},
 		Blob
-	)
+	):Fill(size)
 end
 
 do
@@ -72,6 +73,7 @@ do
 				blob = blob,
 				size = tonumber(size),
 				byte_size = tonumber(byte_size),
+				byte_stride = 2,
 				blob_f16 = blob_f16,
 				GetFloat = function(s, index)
 					local block_index = rshift(index, 5)
@@ -85,7 +87,7 @@ do
 				end,
 			},
 			Blob
-		)
+		):Fill(size)
 	end
 end
 

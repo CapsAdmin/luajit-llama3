@@ -2,12 +2,12 @@ local Tensor = require("tensor")
 require("tensor_compute_ext").use_pthreads()
 local measure = require("debug.measure")
 
-function Tensor.MatrixVectorMultiply(a, b, out, dim0, dim1)
+function Tensor.MatrixVectorMultiplyCPU(a, b, out, dim0, dim1)
 	for i = 0, dim0 - 1 do
 		local result = 0
 
 		for j = 0, dim1 - 1 do
-			result = result + a[i * dim1 + j] * b[j]
+			result = result + a:GetFloat(i * dim1 + j) * b:GetFloat(j)
 		end
 
 		out:SetFloat(i, result)
