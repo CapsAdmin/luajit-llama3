@@ -21,9 +21,7 @@ in
 mkShell {
   buildInputs = [ 
     luajit
-    cudaPackages.cudatoolkit
     cudaPackages.libcublas
-    cudaPackages.cuda_cupti
     cudaPackages.cuda_nvrtc
     glibc
   ];
@@ -31,9 +29,7 @@ mkShell {
     echo "hello"
 
     export LD_LIBRARY_PATH="${lib.makeLibraryPath [
-      cudaPackages.cudatoolkit
       cudaPackages.libcublas
-      cudaPackages.cuda_cupti
       cudaPackages.cuda_nvrtc
       linuxPackages.nvidia_x11
       glibc

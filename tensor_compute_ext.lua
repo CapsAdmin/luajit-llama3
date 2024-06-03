@@ -15,8 +15,7 @@ end
 
 local function use_cuda()
     local gpu = require("compute.gpu_cuda")
-
-    gpu.init()
+    gpu.set_device(0)
 
     local kernel_f32_q4_0_f32 = gpu.compile_kernel([[
         #define BLOCK_SIZE 32

@@ -1,6 +1,10 @@
 local ffi = require("ffi")
 local gpu = {}
 
+local function bytes_to_gb(b)
+    return string.format("%.2f", b/1024/1024/1024)
+end
+
 local cuda
 local nvrtc 
 local cublas
@@ -27,6 +31,12 @@ do
         int cuCtxDestroy ( CUcontext ctx );
         int cuCtxCreate(CUcontext *pctx, unsigned int flags, CUdevice dev);
         int cuDevicePrimaryCtxRetain(CUcontext *pctx, CUdevice dev);
+        int cuCtxSetLimit ( int limit, size_t value );
+        int cuCtxGetLimit ( size_t* value, int limit );
+        int cuDeviceTotalMem ( size_t* bytes, CUdevice dev );
+        int cuDriverGetVersion ( int* driverVersion );
+        int cuDevicePrimaryCtxReset ( CUdevice dev );
+        int cuDevicePrimaryCtxRelease ( CUdevice dev );
         
         int cuModuleLoadData(CUmodule *module, const void *image);
         int cuModuleGetFunction(CUfunction *hfunc, CUmodule hmod, const char *name);
@@ -66,24 +76,38 @@ do
         return tonumber(free[0]), tonumber(available[0])
     end
 
-    function gpu.init(retain)
+    function gpu.set_device(dev)
         cuda.cuInit(0)
 
+        --[[
         local device_count = ffi.new("int[1]")
         cuda.cuDeviceGetCount(device_count)
-        assert(device_count[0] > 0, "No CUDA devices found")
+        assert(device_count[0] > 0, "no CUDA devices found")
+        assert(dev < device_count[0], "device requested is higher than the device count " .. device_count[0])
 
         local device = ffi.new("int[0]")
-        cuda.cuDeviceGet(device, 0)
+        cuda.cuDeviceGet(device, dev)
+        ]]
 
         local context = ffi.new("CUcontext[1]")
-        if retain then
-            cuda.cuDevicePrimaryCtxRetain(context, device[0])
-        else
-            cuda.cuCtxCreate(context, 0, device[0])
-        end
+        local version = ffi.new("int[1]")
+        cuda.cuDriverGetVersion(version)
+        print("cuda driver version: " .. version[0])
+
+        --[[
+            TODO
+            cuda.cuDevicePrimaryCtxReset(dev);
+            cuda.cuDevicePrimaryCtxRelease(dev);
+            cuda.cuDevicePrimaryCtxRetain(context, dev)
+            ]]
         
+        -- this has a limit of 4gb for some reason
+        cuda.cuCtxCreate(context, 0, dev)
+
         cuda.cuCtxSetCurrent(context[0])
+
+        local left, total = gpu.get_memory()
+        print(bytes_to_gb(left) .. "gb left out of " .. bytes_to_gb(total) .. "gb")
     end
 
     function gpu.copy_to_device(device_ptr, buffer, byte_size)
