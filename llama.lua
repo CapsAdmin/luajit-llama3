@@ -1,3 +1,4 @@
+local backend, model_path, prompt = ...
 require("debug.luajit_options")()
 local profiler = require("debug.profiler")
 _G.measure = require("debug.measure")
@@ -7,13 +8,13 @@ local Configuration = require("configuration")
 local Weights = require("weights")
 local Tensor = require("tensor")
 local Sampler = require("topp_sampler")
-require("tensor_compute_ext").use_pthreads()
+require("tensor_compute_ext")["use_" .. backend]()
 
 local function load_and_run(model_path, prompt, token_callback)
 	local context_length = 512
 	local temperature = 0.1
 	local topp = 0.95
-	local max_tokens = 50
+	local max_tokens = math.huge
 	
 	local math_exp = math.exp
 	local floor = math.floor
@@ -145,13 +146,16 @@ local function load_and_run(model_path, prompt, token_callback)
 		end
 
 		token = next_token
-		token_callback(tokenizer.token_to_string(token))
+		local token_string = tokenizer.token_to_string(token)
+		if pos > #tokens and token_string == "<|eot_id|>" then
+			break
+		end
+		token_callback(token_string)
 	end
 end
 
-local model_path = ...
 local prompt = [[<|start_header_id|>user<|end_header_id|>
-hello<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+]]..prompt..[[<|eot_id|><|start_header_id|>assistant<|end_header_id|>
 ]]
 
 load_and_run(model_path, prompt, function(token)

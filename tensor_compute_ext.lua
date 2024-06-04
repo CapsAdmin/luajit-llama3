@@ -15,7 +15,7 @@ end
 
 local function use_cuda()
     local gpu = require("compute.gpu_cuda")
-    gpu.set_device(0)
+    gpu.init_with_device(0)
 
     local kernel_f32_q4_0_f32 = gpu.compile_kernel([[
         #define BLOCK_SIZE 32
@@ -46,13 +46,14 @@ local function use_cuda()
 
         extern "C" __global__ void kernel_f32_q4_0_f32(const unsigned char *a, float* b, float* out, int dim0, int dim1) {
             int row = blockIdx.x * blockDim.x + threadIdx.x;
-            if (row < dim0) { 
-                float result = 0.0f;
-                for (int j = 0; j < dim1; j++) {
-                    result += get_float(a, row * dim1 + j) * b[j];
-                }
-                out[row] = result;
+            if (row >= dim0)
+                return;
+                
+            float result = 0.0f;
+            for (int j = 0; j < dim1; j++) {
+                result += get_float(a, row * dim1 + j) * b[j];
             }
+            out[row] = result;
         }
     ]], "kernel_f32_q4_0_f32")
 
@@ -78,8 +79,15 @@ local function use_cuda()
         local ffi = require("ffi")
 
         local cache = {}
-        local function cached_gpu_allocate(key, size)
+        local function cached_gpu_allocate(key, size, blob)
             cache[key] = cache[key] or {}
+
+            if blob then
+                if not cache[key][blob] then
+                    cache[key][blob] = gpu.allocate_on_device(size, blob.blob)
+                end
+                return cache[key][blob]
+            end
 
             if not cache[key][size] then
                 cache[key][size] = gpu.allocate_on_device(size)
@@ -90,11 +98,11 @@ local function use_cuda()
 
         local function run_kernel(kernel, a, b, out, dim0, dim1)
 
-            local a_gpu = cached_gpu_allocate("a", a.byte_size)
+            local a_gpu = cached_gpu_allocate("a", a.byte_size, a) -- lazily allocate the weights on gpu, assuming a is always the llama weights
             local b_gpu = cached_gpu_allocate("b", b.byte_size)
             local out_gpu = cached_gpu_allocate("out", out.byte_size)
 
-            gpu.copy_to_device(a_gpu, a.blob, a.byte_size)
+            --gpu.copy_to_device(a_gpu, a.blob, a.byte_size) -- no need, the weights never change
             gpu.copy_to_device(b_gpu, b.blob, b.byte_size)
 
             local thread_count = 1024
