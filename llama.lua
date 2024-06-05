@@ -25,13 +25,13 @@ local function load_and_run(model_path, prompt, token_callback)
 	assert(metadata["tokenizer.ggml.model"] == "gpt2")
 	assert(metadata["tokenizer.ggml.tokens"])
 	assert(metadata["tokenizer.ggml.merges"])
-	local tokenizer = Tokenizer(metadata["tokenizer.ggml.tokens"], metadata["tokenizer.ggml.merges"])
-	local config = Configuration(context_length, metadata, tokenizer.vocabulary.size())
+	local tokenizer = Tokenizer:new(metadata["tokenizer.ggml.tokens"], metadata["tokenizer.ggml.merges"])
+	local config = Configuration(context_length, metadata, #metadata["tokenizer.ggml.tokens"])
 	local weights = Weights(tensors, config.numberOfLayers)
 	local kvDim = (config.dim * config.numberOfKeyValueHeads) / config.numberOfHeads
 	local sampler = Sampler:new(config.vocabularySize, temperature, topp)
 
-	local tokens = tokenizer.encode(prompt)
+	local tokens = tokenizer:EncodeString(prompt)
 
 	local function kv_cache()
 		local a = {}
@@ -66,7 +66,7 @@ local function load_and_run(model_path, prompt, token_callback)
 	local function forward(token, position)
 		local dim = config.dim
 		local headSize = config.headSize
-		local kvDim = (config.dim * config.numberOfKeyValueHeads) / config.numberOfHeads
+		local kvDim = ((config.dim * config.numberOfKeyValueHeads) / config.numberOfHeads) 
 		local kvMul = config.numberOfHeads / config.numberOfKeyValueHeads
 		local sqrtHeadSize = math.sqrt(headSize)
 		weights.token_embedding_table:CopyTo(token * dim, state.x, 0, dim)
@@ -135,7 +135,7 @@ local function load_and_run(model_path, prompt, token_callback)
 		weights.wcls:MatrixVectorMultiply(state.x, state.logits, config.vocabularySize, dim)
 	end
 
-	local token = tokenizer.encode("<|begin_of_text|>")[1]
+	local token = tokenizer:EncodeString("<|begin_of_text|>")[1]
 	local next_token
 
 	for pos = 1, max_tokens do
@@ -148,7 +148,7 @@ local function load_and_run(model_path, prompt, token_callback)
 		end
 
 		token = next_token
-		local token_string = tokenizer.token_to_string(token)
+		local token_string = tokenizer:TokenToString(token)
 		if pos > #tokens and token_string == "<|eot_id|>" then
 			break
 		end
