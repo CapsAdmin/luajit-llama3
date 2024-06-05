@@ -78,3 +78,49 @@ do -- some tensor tests
         assert(out:GetFloat(2) == 7)
     end
 end
+
+do -- blob
+    local Blob = require("blob")
+    local ffi = require("ffi")
+
+
+    do -- q4_0
+        local block_size = 32
+
+        local function mock_q40_blob(size)
+            local buffer = ffi.new("uint8_t[?]", size*block_size)
+            for i = 0, (size*32)-1 do
+                buffer[i] = i % 255
+            end
+            return Blob:Q4_0(size, buffer) 
+        end
+
+        local t = mock_q40_blob(512)
+
+        local function check(sum)
+            local expected = "10403395.617538"
+            if tostring(sum) ~= expected then
+                error("Q4_0 read failed, expected " .. expected .. " got " .. tostring(sum), 2)
+            end
+        end
+
+        do
+            local sum = 0
+            for i = 0, t.size-1 do 
+                sum = sum + t:GetFloat(i)
+            end
+            check(sum)
+        end
+
+        do
+            local sum = 0
+            for i = 0, (t.size/block_size) - 1 do
+                local floats = t:Get32FloatsFromBlockIndex(i)
+                for j = 0, 31 do
+                    sum = sum + floats[j]
+                end
+            end
+            check(sum)
+        end
+    end
+end
