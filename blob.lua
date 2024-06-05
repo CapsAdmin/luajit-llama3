@@ -36,9 +36,8 @@ function Blob:F32(size, blob)
 			end,
 		},
 		Blob
-	)--:Fill(size)
+	) --:Fill(size)
 end
-
 
 function Blob:F64(size, blob)
 	local stride = ffi.sizeof("double")
@@ -58,7 +57,7 @@ function Blob:F64(size, blob)
 			end,
 		},
 		Blob
-	)--:Fill(size)
+	) --:Fill(size)
 end
 
 do
@@ -84,29 +83,25 @@ do
 
 	function Blob:Q4_0(size, blob)
 		blob = ffi.cast("uint8_t*", blob or ffi.cast("uint8_t*", ffi.C.malloc(size)))
-		local blob_f16 = ffi.cast([[
+		local blob_f16 = ffi.cast(
+			[[
 			struct {	
 				uint16_t mantissa : 10;
 				uint16_t exponent : 5;
 				uint16_t sign : 1;
 			}*
-		]], blob)
-
+		]],
+			blob
+		)
 		blob_f16 = ffi.cast("uint16_t*", blob)
-		
 		local byte_size = size * type_size
 		assert(byte_size % block_size == 0, "Total size must be a multiple of the block size")
 		byte_size = byte_size / block_size
 		local floats = ffi.typeof("float[32]")
 		local f = floats()
-
 		return setmetatable(
 			{
 				type = "Q4_0",
-				stats = {
-					f16_min = -math.huge, f16_max = math.huge,
-					quant_min = -math.huge, quant_max = math.huge,
-				},
 				blob = blob,
 				size = tonumber(size),
 				byte_size = tonumber(byte_size),
@@ -116,30 +111,27 @@ do
 					local block_index = rshift(index, 5)
 					local block_offset = block_index * type_size
 					local scale = f16_to_f32(blob_f16[block_index * half_type_size])
-					
 					local modIndex = band(index, block_size - 1)
 					local base_offset = block_offset + band(modIndex, half_block_size - 1)
 					local shift_amount = rshift(modIndex, 4) * 4
 					local quant = band(rshift(blob[2 + base_offset], shift_amount), 0x0F)
 					return (quant - 8) * scale
 				end,
-
 				Get32FloatsFromBlockIndex = function(s, block_index)
 					local scale = f16_to_f32(blob_f16[block_index * half_type_size])
-					
 					local block_offset = block_index * type_size
-					for modIndex = 0, 16-1 do
+
+					for modIndex = 0, 16 - 1 do
 						local byte = blob[block_offset + band(modIndex, half_block_size - 1) + 2]
-						
 						f[modIndex] = (band(byte, 0x0F) - 8) * scale
 						f[modIndex + 16] = (band(rshift(byte, 4), 0x0F) - 8) * scale
 					end
-					
+
 					return f
 				end,
 			},
 			Blob
-		)--:Fill(size)
+		) --:Fill(size)
 	end
 end
 

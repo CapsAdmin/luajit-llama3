@@ -1,6 +1,5 @@
 local TOKEN_MERGE_SEPARATOR = "|"
 local BASE_TOKEN_INDEX = 128000
-
 local Tokenizer = {}
 Tokenizer.__index = Tokenizer
 
@@ -13,6 +12,7 @@ function Tokenizer:new(gguf_tokens, gguf_merges)
 	end
 
 	local merges = {}
+
 	for _, v in ipairs(gguf_merges) do
 		local l, r = v:match("(%S+) (%S+)")
 		local l_index = token_to_index[l]
@@ -37,15 +37,17 @@ function Tokenizer:new(gguf_tokens, gguf_merges)
 		end)
 	end
 
-	return setmetatable({
-		merges = merges,
-		index_to_token = index_to_token,
-		token_to_index = token_to_index,
-		special_token_list = special_token_list,
-		special_tokens = special_tokens
-	}, Tokenizer)
+	return setmetatable(
+		{
+			merges = merges,
+			index_to_token = index_to_token,
+			token_to_index = token_to_index,
+			special_token_list = special_token_list,
+			special_tokens = special_tokens,
+		},
+		Tokenizer
+	)
 end
-
 
 do
 	local function reverse_bytemap(b1, b2)
@@ -62,9 +64,7 @@ do
 				return 173, 2
 			end
 		elseif b1 == 194 then
-			if b2 >= 161 and b2 <= 191 then
-				return b2, 2
-			end
+			if b2 >= 161 and b2 <= 191 then return b2, 2 end
 		elseif b1 == 195 then
 			if b2 >= 128 and b2 <= 159 then
 				return b2 + 64, 2
@@ -74,7 +74,7 @@ do
 		elseif b1 >= 33 and b1 <= 126 then
 			return b1, 1
 		end
-		
+
 		error("character out of range")
 	end
 
@@ -82,15 +82,19 @@ do
 		local str = self.index_to_token[token]
 		local out = ""
 		local i = 1
+
 		while i <= #str do
-			local b, size = reverse_bytemap(str:byte(i), str:byte(i+1))
+			local b, size = reverse_bytemap(str:byte(i), str:byte(i + 1))
+
 			if b and b > 0 and b < 256 then
 				out = out .. string.char(b)
 			else
 				out = out .. "*INVALID TOKEN*"
 			end
+
 			i = i + size
 		end
+
 		return out
 	end
 end
@@ -118,7 +122,6 @@ do
 
 	function Tokenizer:EncodeString(str)
 		local ids = {}
-
 		local i = 1
 
 		while i <= #str do
@@ -169,6 +172,7 @@ do
 
 			while i <= #ids do
 				local key = ids[i + 1] and ids[i] .. TOKEN_MERGE_SEPARATOR .. ids[i + 1]
+
 				if minPair == key then
 					table.insert(newIds, self.merges[minPair])
 					i = i + 2

@@ -47,7 +47,7 @@ end
 do
 	function Tensor:Dot(thisOffset, that, thatOffset, size)
 		if self.blob.type == "Q4_0" then
-			return self:Dot2(thisOffset, that, thatOffset, size) 
+			return self:Dot2(thisOffset, that, thatOffset, size)
 		end
 
 		local result = 0
@@ -55,22 +55,22 @@ do
 		for j = 0, size - 1 do
 			result = result + self:GetFloat(thisOffset + j) * that:GetFloat(thatOffset + j)
 		end
-	
+
 		return result
 	end
 
 	function Tensor:Dot2(thisOffset, that, thatOffset, size)
 		local result = 0
-
 		thisOffset = thisOffset / 32
 
-		for j = 0, (size/32) - 1 do
+		for j = 0, (size / 32) - 1 do
 			local floats = self.blob:Get32FloatsFromBlockIndex(thisOffset + j)
+
 			for k = 0, 31 do
 				result = result + floats[k] * that:GetFloat(k + thatOffset + j)
 			end
 		end
-	
+
 		return result
 	end
 
@@ -78,9 +78,8 @@ do
 		for i = 0, dim0 - 1 do
 			out:SetFloat(i, self:Dot(i * dim1, that, 0, dim1))
 		end
-		if self.type == "Q4_0" then
-			error("")
-		end
+
+		if self.type == "Q4_0" then error("") end
 	end
 end
 

@@ -107,7 +107,6 @@ local function use_cuda()
         end
 
         local function run_kernel(kernel, a, b, out, dim0, dim1)
-
             local a_gpu = cached_gpu_allocate("a", a.byte_size, a) -- lazily allocate the weights on gpu, assuming a is always the llama weights
             local b_gpu = cached_gpu_allocate("b", b.byte_size)
             local out_gpu = cached_gpu_allocate("out", out.byte_size)

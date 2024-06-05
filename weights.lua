@@ -1,14 +1,11 @@
 local Tensor = require("tensor")
 local ffi = require("ffi")
-
 local total_bytes = 0
 
 local function loadTensor(entry, name)
 	if Tensor[entry.type_info.name] then
 		local t = Tensor[entry.type_info.name](Tensor, entry.size, entry.blob):SetName(name .. "[" .. entry.type_info.name .. "]")
 		total_bytes = total_bytes + t.blob.byte_size
-
-		
 		return t
 	end
 
@@ -19,7 +16,7 @@ local function loadTensorArray(size, getTensorEntry)
 	local array = {}
 
 	for i = 1, size do
-		array[i] = loadTensor(getTensorEntry(i-1))
+		array[i] = loadTensor(getTensorEntry(i - 1))
 	end
 
 	return array
@@ -73,9 +70,7 @@ local function Weights(tensors, numberOfLayers)
 		-- (optional) classifier weights for the logits, on the last layer
 		wcls = loadTensor(tensors["output.weight"], "output.weight"), -- (vocab_size, dim)
 	}
-
-	print("total size of weights is ".. (total_bytes/10744758272) .. "gb")
-
+	print("total size of weights is " .. (total_bytes / 10744758272) .. "gb")
 	return w
 end
 

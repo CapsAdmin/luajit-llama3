@@ -34,9 +34,8 @@ ffi.cdef[[
 ]]
 
 local function get_cpu_threads()
-	if ffi.os == "OSX" then
-		return tonumber(ffi.C.sysconf(58))
-	end
+	if ffi.os == "OSX" then return tonumber(ffi.C.sysconf(58)) end
+
 	return tonumber(ffi.C.sysconf(83))
 end
 

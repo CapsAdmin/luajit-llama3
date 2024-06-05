@@ -8,19 +8,16 @@ local Configuration = require("configuration")
 local Weights = require("weights")
 local Tensor = require("tensor")
 local Sampler = require("topp_sampler")
-if backend ~= "lua" then
-	require("tensor_compute_ext")["use_" .. backend]()
-end
+
+if backend ~= "lua" then require("tensor_compute_ext")["use_" .. backend]() end
 
 local function load_and_run(model_path, prompt, token_callback)
 	local context_length = 512
 	local temperature = 0.1
 	local topp = 0.95
 	local max_tokens = math.huge
-	
 	local math_exp = math.exp
 	local floor = math.floor
-
 	local metadata, tensors = gguf.load(model_path)
 	assert(metadata["tokenizer.ggml.model"] == "gpt2")
 	assert(metadata["tokenizer.ggml.tokens"])
@@ -30,7 +27,6 @@ local function load_and_run(model_path, prompt, token_callback)
 	local weights = Weights(tensors, config.numberOfLayers)
 	local kvDim = (config.dim * config.numberOfKeyValueHeads) / config.numberOfHeads
 	local sampler = Sampler:new(config.vocabularySize, temperature, topp)
-
 	local tokens = tokenizer:EncodeString(prompt)
 
 	local function kv_cache()
@@ -57,7 +53,6 @@ local function load_and_run(model_path, prompt, token_callback)
 		keyCache = kv_cache(),
 		valueCache = kv_cache(),
 	}
-	
 
 	local function exp(value)
 		return value / (1.0 + math_exp(-value))
@@ -66,7 +61,7 @@ local function load_and_run(model_path, prompt, token_callback)
 	local function forward(token, position)
 		local dim = config.dim
 		local headSize = config.headSize
-		local kvDim = ((config.dim * config.numberOfKeyValueHeads) / config.numberOfHeads) 
+		local kvDim = ((config.dim * config.numberOfKeyValueHeads) / config.numberOfHeads)
 		local kvMul = config.numberOfHeads / config.numberOfKeyValueHeads
 		local sqrtHeadSize = math.sqrt(headSize)
 		weights.token_embedding_table:CopyTo(token * dim, state.x, 0, dim)
@@ -74,7 +69,6 @@ local function load_and_run(model_path, prompt, token_callback)
 		for l = 1, config.numberOfLayers do
 			local keyCache = state.keyCache[l]
 			local valueCache = state.valueCache[l]
-
 			state.xb:RmsNormInPlace(state.x, weights.rms_att_weight[l], dim, config.rmsNormEps)
 			weights.wq[l]:MatrixVectorMultiply(state.xb, state.q, dim, dim)
 			weights.wk[l]:MatrixVectorMultiply(state.xb, state.k, kvDim, dim)
@@ -149,15 +143,15 @@ local function load_and_run(model_path, prompt, token_callback)
 
 		token = next_token
 		local token_string = tokenizer:TokenToString(token)
-		if pos > #tokens and token_string == "<|eot_id|>" then
-			break
-		end
+
+		if pos > #tokens and token_string == "<|eot_id|>" then break end
+
 		token_callback(token_string)
 	end
 end
 
 local prompt = [[<|start_header_id|>user<|end_header_id|>
-]]..prompt..[[<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+]] .. prompt .. [[<|eot_id|><|start_header_id|>assistant<|end_header_id|>
 ]]
 
 load_and_run(model_path, prompt, function(token)

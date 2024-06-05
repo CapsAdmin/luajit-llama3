@@ -239,6 +239,7 @@ local function load_gguf(path)
 		file:close()
 		error("Failed to read the tensor")
 	end
+
 	measure()
 
 	for i, tensor in ipairs(tensors) do
