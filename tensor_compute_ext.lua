@@ -17,7 +17,7 @@ local function use_cuda()
     local gpu = require("compute.gpu_cuda")
     gpu.init_with_device(0)
 
-    local kernel_f32_q4_0_f32 = gpu.compile_kernel([[
+    local kernel_q40_f32_f32 = gpu.compile_kernel([[
         #define BLOCK_SIZE 32
         #define HALF_BLOCK_SIZE 16
         #define TYPE_SIZE 18
@@ -31,31 +31,40 @@ local function use_cuda()
             return (float)sign * (float)ldexpf(base, exponent - 25);
         }
 
-        __device__ float get_float(const unsigned char *blob, int index) {
+        __device__ void decode_float_block(const unsigned char *blob, int block_index, float *f) {
             const unsigned short* blob_f16 = (const unsigned short*)blob;
-            int block_index = index >> 5;					
-            int block_offset = block_index * TYPE_SIZE;
+            
             float scale = f16_to_f32(blob_f16[block_index * HALF_TYPE_SIZE]);
-            int modIndex = index & (BLOCK_SIZE - 1);
-            int base_offset = block_offset + (modIndex & (HALF_BLOCK_SIZE - 1));
-            int shift_amount = (modIndex >> 4) * 4; 
-            int quant = (blob[2 + base_offset] >> shift_amount) & 0x0F;
+            
+            int block_offset = block_index * TYPE_SIZE;
+            for (int i = 0; i < 16; i++) {
+                unsigned char b = blob[block_offset + (i & (HALF_BLOCK_SIZE - 1)) + 2];
 
-            return (quant - 8) * scale;
+                f[i] = ((b & 0x0F) - 8) * scale;
+                f[i+16] = (((b >> 4) & 0x0F) - 8) * scale;
+            }
         }
 
-        extern "C" __global__ void kernel_f32_q4_0_f32(const unsigned char *a, float* b, float* out, int dim0, int dim1) {
+        extern "C" __global__ void kernel_q40_f32_f32(const unsigned char *a, float* b, float* out, int dim0, int dim1) {
             int row = blockIdx.x * blockDim.x + threadIdx.x;
             if (row >= dim0)
                 return;
                 
+            __shared__ float float_block[32];
             float result = 0.0f;
-            for (int j = 0; j < dim1; j++) {
-                result += get_float(a, row * dim1 + j) * b[j];
+            int block_index = (row * dim1) / 32;
+
+            for (int j = 0; j < dim1 / 32; j++) {
+                decode_float_block(a, block_index + j, float_block);
+
+                #pragma unroll
+                for (int k = 0; k < 32; k++) {
+                    result += float_block[k] * b[j*32+k];
+                }
             }
             out[row] = result;
         }
-    ]], "kernel_f32_q4_0_f32")
+    ]], "kernel_q40_f32_f32")
 
 
     local kernel_f32_f32_f32 = gpu.compile_kernel([[
@@ -65,8 +74,9 @@ local function use_cuda()
                 return;
 
             float result = 0.0f;
+            int offset = row * dim1;
             for (int j = 0; j < dim1; j++) {
-                result += a[row * dim1 + j] * b[j];
+                result += a[offset + j] * b[j];
             }
             out[row] = result;
         }
@@ -126,7 +136,7 @@ local function use_cuda()
 
         function Tensor.MatrixVectorMultiply(a, b, out, dim0, dim1)
             if a.blob.type == "Q4_0" and b.blob.type == "F32" and out.blob.type == "F32" then
-                run_kernel(kernel_f32_q4_0_f32, a.blob, b.blob, out.blob, dim0, dim1)
+                run_kernel(kernel_q40_f32_f32, a.blob, b.blob, out.blob, dim0, dim1)
             elseif a.blob.type == "F32" and b.blob.type == "F32" and out.blob.type == "F32" then
                 run_kernel(kernel_f32_f32_f32, a.blob, b.blob, out.blob, dim0, dim1)
             else
