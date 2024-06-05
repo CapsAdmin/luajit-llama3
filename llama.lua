@@ -8,7 +8,9 @@ local Configuration = require("configuration")
 local Weights = require("weights")
 local Tensor = require("tensor")
 local Sampler = require("topp_sampler")
-require("tensor_compute_ext")["use_" .. backend]()
+if backend ~= "lua" then
+	require("tensor_compute_ext")["use_" .. backend]()
+end
 
 local function load_and_run(model_path, prompt, token_callback)
 	local context_length = 512
