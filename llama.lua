@@ -2,6 +2,7 @@ local backend, model_path, prompt = ...
 require("debug.luajit_options")()
 local profiler = require("debug.profiler")
 local get_time = require("debug.get_time")
+local measure = require("debug.measure")
 local gguf = require("gguf")
 local Tokenizer = require("tokenizer")
 local Weights = require("weights")
@@ -15,6 +16,7 @@ local function load_and_run(model_path, prompt, token_callback)
 	local temperature = 0.1
 	local topp = 0.95
 	local max_tokens = math.huge
+	local seed = 1337
 	local metadata, tensors = gguf.load(model_path)
 	assert(metadata["tokenizer.ggml.model"] == "gpt2")
 	assert(metadata["tokenizer.ggml.tokens"])
@@ -153,9 +155,56 @@ local function load_and_run(model_path, prompt, token_callback)
 			state.val_cache[i] = Tensor:F32(context_length * kv_dim)
 		end
 
-		profiler.Start()
+		if backend == "cuda" then
+			-- upload and preallocate tensor memory for better performance and vram usage
+			local total_size = 0
+			local gpu = require("compute.gpu_cuda")
+			measure("uploading tensors to gpu")
+			local size_map = {}
+
+			for _, tensor in ipairs(Tensor.GetAll()) do
+				if tensor.name and tensor.name:find(".weight") then
+					-- weight tensors are static
+					tensor.blob.gpu_ptr = gpu.allocate_on_device(tensor.blob.byte_size, tensor.blob.blob)
+					total_size = total_size + tensor.blob.byte_size
+				else
+					-- state tensors are dynamic and are uploaded on each Tensor.MatrixVectorMultiply call
+					-- so we can allocate and share memory for each byte size
+					size_map[tensor.blob.byte_size] = size_map[tensor.blob.byte_size] or {}
+					table.insert(size_map[tensor.blob.byte_size], tensor)
+				end
+			end
+
+			for byte_size, tensors in pairs(size_map) do
+				local gpu_ptr = gpu.allocate_on_device(byte_size)
+
+				for _, tensor in ipairs(tensors) do
+					tensor.blob.gpu_ptr = gpu_ptr
+					gpu.copy_to_device(gpu_ptr, tensor.blob.blob, byte_size)
+				end
+
+				total_size = total_size + byte_size
+			end
+
+			measure()
+			print(string.format("%.2fgb tensors allocated on GPU", total_size / 1024 / 1024 / 1024))
+			gpu.dump_gpu_stats()
+		end
+
+		do
+			local total_size = 0
+
+			for _, tensor in ipairs(Tensor.GetAll()) do
+				total_size = total_size + tensor.blob.byte_size
+			end
+
+			print(string.format("%.2fgb tensors allocated on CPU", total_size / 1024 / 1024 / 1024))
+		end
+
+		--profiler.Start()
 		local total_time = 0
-		print("\n===================")
+		print("\n\n\n")
+		math.randomseed(seed)
 
 		while state.token_pos < max_tokens do
 			local start_time = get_time()
@@ -181,11 +230,11 @@ local function load_and_run(model_path, prompt, token_callback)
 			total_time = total_time + get_time() - start_time
 		end
 
-		print("\n===================")
+		print("\n\n\n")
 
 		if backend == "cuda" then require("compute.gpu_cuda").dump_gpu_stats() end
 
-		profiler.Stop()
+		--profiler.Stop()
 		local token_count = (state.token_pos + 1)
 		local tokens_per_sec = 1 / (total_time / token_count)
 		print(
@@ -196,6 +245,18 @@ local function load_and_run(model_path, prompt, token_callback)
 				tokens_per_sec
 			)
 		)
+
+		if backend == "cuda" and false then -- LOL
+			local gpu = require("compute.gpu_cuda")
+			local done = {}
+
+			for _, tensor in ipairs(Tensor.GetAll()) do
+				if not done[tensor.blob.gpu_ptr] then
+					gpu.free_on_device(tensor.blob.gpu_ptr)
+					done[tensor.blob.gpu_ptr] = true
+				end
+			end
+		end
 	end
 end
 

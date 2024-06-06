@@ -1,12 +1,14 @@
-local ffi = require("ffi")
 local Blob = require("blob")
 local math_exp = math.exp
 
 local Tensor = {}
 Tensor.__index = Tensor
-ffi.cdef[[
-	void *malloc( size_t size );
-]]
+
+Tensor.tensors_created = {}
+
+function Tensor.GetAll()
+	return Tensor.tensors_created
+end
 
 function Tensor:F32(size, blob)
 	return self:new(Blob:F32(size, blob))
@@ -24,6 +26,7 @@ function Tensor:new(blob)
 	local t = setmetatable({}, Tensor)
 	t.blob = blob
 	t.size = blob.size
+	table.insert(Tensor.tensors_created, t)
 	return t
 end
 
@@ -74,7 +77,13 @@ do
 
 	function Tensor:MatrixVectorMultiply(that, out, dim0, dim1)
 		for i = 0, dim0 - 1 do
-			out:SetFloat(i, self:Dot(i * dim1, that, 0, dim1))
+			local result = 0
+	
+			for j = 0, dim1 - 1 do
+				result = result + self:GetFloat(i * dim1 + j) * that:GetFloat(j)
+			end
+	
+			out:SetFloat(i, result)
 		end
 	end
 end
@@ -121,10 +130,28 @@ do
 	end
 end
 
-function Tensor:CopyTo(thisOffset, that, thatOffset, size)
-    for i = thatOffset, thatOffset + size - 1 do
-        that:SetFloat(i, self:GetFloat(i - thatOffset + thisOffset))
-    end
+do
+	function Tensor:CopyTo(thisOffset, that, thatOffset, size)
+		if self.blob.type == "F32" and that.blob.type == "F32" then
+			return self:CopyTo_memcpy_f32_f32(thisOffset, that, thatOffset, size)
+		end
+
+		for i = thatOffset, thatOffset + size - 1 do
+			that:SetFloat(i, self:GetFloat(i - thatOffset + thisOffset))
+		end
+	end
+
+	local ffi = require("ffi")
+
+	ffi.cdef[[
+		void *memcpy(void *dest, const void *src, size_t n);
+	]]
+
+	function Tensor:CopyTo_memcpy_f32_f32(thisOffset, that, thatOffset, size)
+		local src_ptr = self.blob.blob + thisOffset
+		local dest_ptr = that.blob.blob + thatOffset
+		ffi.C.memcpy(dest_ptr, src_ptr, size * self.blob.byte_stride)
+	end
 end
 
 do

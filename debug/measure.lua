@@ -8,7 +8,7 @@ local function measure(what)
     else
         local t = table.remove(timers, 1)
         local time = get_time() - t.time
-        print(t.what .. " took " .. time .. " seconds")
+        print(string.format("%s took %.5f seconds", t.what, time))
         return time
     end
 end

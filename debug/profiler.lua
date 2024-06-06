@@ -17,10 +17,10 @@ function profiler.Stop()
 	}
 	jit_profiler.EnableTraceAbortLogging(false)
 	jit_profiler.EnableStatisticalProfiling(false)
-	jit_profiler.PrintTraceAborts(500)
+	jit_profiler.PrintTraceAborts(10)
 
 	for i, v in ipairs(stats_filter) do
-		jit_profiler.PrintStatistical(500, v.title, v.filter)
+		jit_profiler.PrintStatistical(10, v.title, v.filter)
 	end
 end
 

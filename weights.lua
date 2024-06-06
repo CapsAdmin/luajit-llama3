@@ -1,12 +1,9 @@
 local Tensor = require("tensor")
 local ffi = require("ffi")
-local total_bytes = 0
 
 local function loadTensor(entry, name)
 	if Tensor[entry.type_info.name] then
-		local t = Tensor[entry.type_info.name](Tensor, entry.size, entry.blob):SetName(name .. "[" .. entry.type_info.name .. "]")
-		total_bytes = total_bytes + t.blob.byte_size
-		return t
+		return Tensor[entry.type_info.name](Tensor, entry.size, entry.blob):SetName(name .. "[" .. entry.type_info.name .. "]")
 	end
 
 	error("NYI tensor type: " .. entry.type_info.name)
@@ -23,7 +20,7 @@ local function loadTensorArray(size, getTensorEntry)
 end
 
 local function Weights(tensors, numberOfLayers)
-	local w = {
+	return {
 		-- token embedding table
 		token_embedding_table = loadTensor(tensors["token_embd.weight"], "token_embd.weight"), -- (vocab_size, dim)
 		-- weights for rmsnorms
@@ -70,8 +67,6 @@ local function Weights(tensors, numberOfLayers)
 		-- (optional) classifier weights for the logits, on the last layer
 		wcls = loadTensor(tensors["output.weight"], "output.weight"), -- (vocab_size, dim)
 	}
-	print("total size of weights is " .. (total_bytes / 10744758272) .. "gb")
-	return w
 end
 
 return Weights

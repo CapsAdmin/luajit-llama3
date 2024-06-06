@@ -88,38 +88,18 @@ local function use_cuda()
         local SHORT_SIZE = 2
         local ffi = require("ffi")
 
-        local cache = {}
-        local function cached_gpu_allocate(key, size, blob)
-            cache[key] = cache[key] or {}
-
-            if blob then
-                if not cache[key][blob] then
-                    cache[key][blob] = gpu.allocate_on_device(size, blob.blob)
-                end
-                return cache[key][blob]
-            end
-
-            if not cache[key][size] then
-                cache[key][size] = gpu.allocate_on_device(size)
-            end
-
-            return cache[key][size]
-        end
-
         local function run_kernel(kernel, a, b, out, dim0, dim1)
-            local a_gpu = cached_gpu_allocate("a", a.byte_size, a) -- lazily allocate the weights on gpu, assuming a is always the llama weights
-            local b_gpu = cached_gpu_allocate("b", b.byte_size)
-            local out_gpu = cached_gpu_allocate("out", out.byte_size)
-
-            --gpu.copy_to_device(a_gpu, a.blob, a.byte_size) -- no need, the weights never change
-            gpu.copy_to_device(b_gpu, b.blob, b.byte_size)
+            -- this assumes a, b and out have been uploaded and allocated on the gpu
+            -- it also assumes a never changes, which in the context of this proejct are the
+            -- weights
+            gpu.copy_to_device(b.gpu_ptr, b.blob, b.byte_size)
 
             local thread_count = 1024
             local block_count = math.ceil((dim0 + thread_count - 1) / thread_count)
 
             local box_dim0 = ffi.new("int[1]", dim0)
             local box_dim1 = ffi.new("int[1]", dim1)
-            local args = ffi.new("void*[5]", a_gpu, b_gpu, out_gpu, box_dim0, box_dim1)
+            local args = ffi.new("void*[5]", a.gpu_ptr, b.gpu_ptr, out.gpu_ptr, box_dim0, box_dim1)
 
             gpu.run_kernel(
                 kernel, 
@@ -128,7 +108,7 @@ local function use_cuda()
                 args
             )
 
-            gpu.copy_from_device(out_gpu, out.blob, dim0 * out.byte_stride)
+            gpu.copy_from_device(out.gpu_ptr, out.blob, dim0 * out.byte_stride)
         end
 
         Tensor.MatrixVectorMultiplyCPU = Tensor.MatrixVectorMultiply

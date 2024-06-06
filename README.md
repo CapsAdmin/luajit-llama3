@@ -1,21 +1,40 @@
-Llama3 inference with luajit using the Q4_0 model variant.
+Llama3 inference with luajit using the Q4_0 model variant. 
 
-99% of the time is being spent in Tensor.MatrixVectorMultiply. There is a pthreads and a cuda variant, though both are not optimal. The cuda version spends most of its time uploading tensors, and the pthreads version is running in multiple lua states spread accross cores.
+It can use cuda, pthreads or plain luajit to do inference, though the luajit variant is painfully slow. Most of the time is being spent in Tensor.MatrixVectorMultiply
 
-The cuda version is however significantly faster.
+The cuda version uses a kernel to do the multiplication while the pthreads version just spreads the calculation accross multiple lua states in threads.
 
-It would be cool to make the pure luajit version faster, but I'm not really sure how.
+It would be cool to make the pure luajit version faster, but I'm not really sure how. Using simd can speed it up quite a bit, but this is not available directly in LuaJIT ([though it's on the roadmap](https://github.com/LuaJIT/LuaJIT/pull/116)) so the only option is to compile specialized C code to load with ffi.
 
-To try the cuda version, change use_pthreads() in llama.lua to use_cuda(). It depends on libnvrtc for compiling kernels and libcuda for everything else.
 
 ```
-luajit llama.lua cuda "Meta-Llama-3-8B-Instruct-Q4_0.gguf" "what is luajit?"
+luajit llama.lua cuda "Meta-Llama-3-8B-Instruct-Q4_0.gguf" "write a luajit haiku"
+cuda driver version: 12.04
+using device: NVIDIA GeForce RTX 4090
+reading gguf metadata took 0.10612 seconds
+reading gguf tensors took 2.02863 seconds
+uploading tensors to gpu took 0.50892 seconds
+4.21gb tensors allocated on GPU
+3.35 / 23.64 gb vram in use
+4.33gb tensors allocated on CPU
+
+
+
+
 <|start_header_id|>user<|end_header_id|>
-what is luajit?<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+write a luajit haiku<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+A haiku in Lua!
 
-LuaJIT is a just-in-time (JIT) compiler for the Lua programming language. It is designed to provide high-performance execution of Lua code, making it suitable for use in applications where speed and efficiency are critical.
+Fuzzy math whispers
+Glowing pixels unfold
+Code's gentle hum<|eot_id|>
 
-LuaJIT is a se^C
+
+
+3.36 / 23.64 gb vram in use
+token count: 38
+elapsed: 1.86s
+20.40 tokens/s
 ```
 
 I mostly used https://github.com/mukel/llama3.java as source reference. You can find the instructions on how to download "Meta-Llama-3-8B-Instruct-Q4_0.gguf" in there.

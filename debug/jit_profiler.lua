@@ -123,7 +123,6 @@ do
 			data[path][line].start_time = data[path][line].start_time or get_time()
 			data[path][line].vmstate[vmstate] = (data[path][line].vmstate[vmstate] or 0) + 1
 			local parent = data[path][line]
-
 			for _, info in ipairs(children) do
 				local path = info.path or info.name
 				local line = tonumber(info.line) or -1
@@ -222,7 +221,7 @@ do
 			{from = "I", to = "interpreted"},
 			{from = "G", to = "garbage collection"},
 			{from = "J", to = "compiling"},
-			{from = "C", to = "C code"},
+			{from = "C", to = "c code"},
 		}
 		local vmstate_friendly = {}
 

@@ -273,8 +273,6 @@ do
 			--print("\twith ctx flags: " .. table.concat(translate_context_flags(get_context_flags(dev)), " "))
 			--print("\twith primary ctx flags: " .. table.concat(translate_context_flags(get_device_primary_flags(dev)), " "))
 			end
-
-			gpu.dump_gpu_stats()
 		end
 	end
 
@@ -313,7 +311,7 @@ do
 	function gpu.dump_gpu_stats()
 		local left, total = gpu.get_memory()
 		print(
-			"using " .. bytes_to_gb(left) .. " / " .. bytes_to_gb(total) .. " gb vram"
+			bytes_to_gb(left) .. " / " .. bytes_to_gb(total) .. " gb vram in use"
 		)
 	end
 end
