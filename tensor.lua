@@ -196,12 +196,23 @@ do
 	end
 end
 
-function Tensor:SaxyInPlace(thisOffset, that, thatOffset, size, a)
+function Tensor:SaxpyInPlace(thisOffset, that, thatOffset, size, a)
 	for i = 0, size - 1 do
 		self:SetFloat(thisOffset + i, a * that:GetFloat(thatOffset + i) + self:GetFloat(thisOffset + i))
 	end
 
 	return self
+end
+
+do
+	local math_exp = math.exp
+	local function F(value)
+		return value / (1.0 + math_exp(-value))
+	end
+
+	function Tensor:SigmoidInPlace()
+		self:MapInPlace(0, self.size, F)
+	end
 end
 
 do

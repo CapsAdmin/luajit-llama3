@@ -4,7 +4,6 @@ local profiler = require("debug.profiler")
 _G.measure = require("debug.measure")
 local gguf = require("gguf")
 local Tokenizer = require("tokenizer")
-local Configuration = require("configuration")
 local Weights = require("weights")
 local Tensor = require("tensor")
 local Sampler = require("topp_sampler")
@@ -16,137 +15,166 @@ local function load_and_run(model_path, prompt, token_callback)
 	local temperature = 0.1
 	local topp = 0.95
 	local max_tokens = math.huge
-	local math_exp = math.exp
-	local floor = math.floor
 	local metadata, tensors = gguf.load(model_path)
 	assert(metadata["tokenizer.ggml.model"] == "gpt2")
 	assert(metadata["tokenizer.ggml.tokens"])
 	assert(metadata["tokenizer.ggml.merges"])
-	local tokenizer = Tokenizer:new(metadata["tokenizer.ggml.tokens"], metadata["tokenizer.ggml.merges"])
-	local config = Configuration(context_length, metadata, #metadata["tokenizer.ggml.tokens"])
-	local weights = Weights(tensors, config.numberOfLayers)
-	local kvDim = (config.dim * config.numberOfKeyValueHeads) / config.numberOfHeads
-	local sampler = Sampler:new(config.vocabularySize, temperature, topp)
-	local tokens = tokenizer:EncodeString(prompt)
 
-	local function kv_cache()
-		local a = {}
+	do
+		local dim = metadata["llama.embedding_length"]
+		local hidden_dim = metadata["llama.feed_forward_length"]
+		local number_of_layers = metadata["llama.block_count"]
+		local number_of_heads = metadata["llama.attention.head_count"]
+		local number_of_key_value_heads = metadata["llama.attention.head_count_kv"] and
+			metadata["llama.attention.head_count_kv"] or
+			metadata["llama.attention.head_count"]
+		local vocabulary_size = #metadata["tokenizer.ggml.tokens"]
+		local rms_norm_eps = metadata["llama.attention.layer_norm_rms_epsilon"] or 1e-5
+		local head_size = dim / number_of_heads
+		local kv_dim = (dim * number_of_key_value_heads) / number_of_heads
+		local kv_mul = number_of_heads / number_of_key_value_heads
+		local sqrt_head_size = math.sqrt(head_size)
+		local rope_theta = metadata["llama.rope.freq_base"] or 10000
 
-		for i = 1, config.numberOfLayers do
-			a[i] = Tensor:F32(config.contextLength * kvDim)
-		end
+		local function build_rope_freqs(context_length, rope_theta)
+			rope_theta = rope_theta or 10000
+			assert(head_size % 2 == 0)
+			local cr = {}
+			local ci = {}
+			local n = 1
 
-		return a
-	end
-
-	local state = {
-		x = Tensor:F32(config.dim),
-		xb = Tensor:F32(config.dim),
-		xb2 = Tensor:F32(config.dim),
-		hb = Tensor:F32(config.hiddenDim),
-		hb2 = Tensor:F32(config.hiddenDim),
-		q = Tensor:F32(config.dim),
-		k = Tensor:F32(config.dim),
-		v = Tensor:F32(config.dim),
-		att = Tensor:F32(config.numberOfHeads * config.contextLength),
-		logits = Tensor:F32(config.vocabularySize),
-		keyCache = kv_cache(),
-		valueCache = kv_cache(),
-	}
-
-	local function exp(value)
-		return value / (1.0 + math_exp(-value))
-	end
-
-	local function forward(token, position)
-		local dim = config.dim
-		local headSize = config.headSize
-		local kvDim = ((config.dim * config.numberOfKeyValueHeads) / config.numberOfHeads)
-		local kvMul = config.numberOfHeads / config.numberOfKeyValueHeads
-		local sqrtHeadSize = math.sqrt(headSize)
-		weights.token_embedding_table:CopyTo(token * dim, state.x, 0, dim)
-
-		for l = 1, config.numberOfLayers do
-			local keyCache = state.keyCache[l]
-			local valueCache = state.valueCache[l]
-			state.xb:RmsNormInPlace(state.x, weights.rms_att_weight[l], dim, config.rmsNormEps)
-			weights.wq[l]:MatrixVectorMultiply(state.xb, state.q, dim, dim)
-			weights.wk[l]:MatrixVectorMultiply(state.xb, state.k, kvDim, dim)
-			weights.wv[l]:MatrixVectorMultiply(state.xb, state.v, kvDim, dim)
-
-			for i = 0, dim - 1, 2 do
-				local head_dim = i % headSize
-				local fcr = config.ropeFreqsReal[1 + ((position * (headSize / 2) + (head_dim / 2)))]
-				local fci = config.ropeFreqsImag[1 + ((position * (headSize / 2) + (head_dim / 2)))]
-				local rotn = i < kvDim and 2 or 1
-
-				for v = 0, rotn - 1 do
-					local vec = v == 0 and state.q or state.k
-					local v0 = vec:GetFloat(i)
-					local v1 = vec:GetFloat(i + 1)
-					vec:SetFloat(i, v0 * fcr - v1 * fci)
-					vec:SetFloat(i + 1, v0 * fci + v1 * fcr)
+			for pos = 0, context_length - 1 do
+				for i = 0, head_size - 1, 2 do
+					local freq = 1.0 / (rope_theta ^ (i / head_size))
+					local val = pos * freq
+					cr[n] = math.cos(val)
+					ci[n] = math.sin(val)
+					n = n + 1
 				end
 			end
 
-			state.k:CopyTo(0, keyCache, position * kvDim, kvDim)
-			state.v:CopyTo(0, valueCache, position * kvDim, kvDim)
+			n = n - 1
+			assert(context_length * (head_size / 2) == n)
+			return cr, ci
+		end
 
-			for h = 0, config.numberOfHeads - 1 do
-				local qOffset = h * headSize
-				local attOffset = h * config.contextLength
+		local rope_freqs_real, rope_freqs_imag = build_rope_freqs(context_length, rope_theta)
+		local floor = math.floor
 
-				for t = 0, position do
-					local keyCacheOffset = t * kvDim + floor(h / kvMul) * headSize
-					local score = state.q:Dot(qOffset, keyCache, keyCacheOffset, headSize)
-					score = score / sqrtHeadSize
-					state.att:SetFloat(attOffset + t, score)
+		local function forward(state, weights)
+			weights.token_embedding_table:CopyTo(state.token * dim, state.x, 0, dim)
+
+			for l = 1, number_of_layers do
+				local key_cache = state.key_cache[l]
+				local val_cache = state.val_cache[l]
+				state.xb:RmsNormInPlace(state.x, weights.rms_att_weight[l], dim, rms_norm_eps)
+				weights.wq[l]:MatrixVectorMultiply(state.xb, state.q, dim, dim)
+				weights.wk[l]:MatrixVectorMultiply(state.xb, state.k, kv_dim, dim)
+				weights.wv[l]:MatrixVectorMultiply(state.xb, state.v, kv_dim, dim)
+
+				for i = 0, dim - 1, 2 do
+					local head_dim = i % head_size
+					local fcr = rope_freqs_real[1 + ((state.token_pos * (head_size / 2) + (head_dim / 2)))]
+					local fci = rope_freqs_imag[1 + ((state.token_pos * (head_size / 2) + (head_dim / 2)))]
+					local rotn = i < kv_dim and 2 or 1
+
+					for v = 0, rotn - 1 do
+						local vec = v == 0 and state.q or state.k
+						local v0 = vec:GetFloat(i)
+						local v1 = vec:GetFloat(i + 1)
+						vec:SetFloat(i, v0 * fcr - v1 * fci)
+						vec:SetFloat(i + 1, v0 * fci + v1 * fcr)
+					end
 				end
 
-				state.att:SoftMaxInPlace(attOffset, position + 1)
-				local xbOffset = h * headSize
-				state.xb:FillInPlace(xbOffset, headSize, 0)
+				state.k:CopyTo(0, key_cache, state.token_pos * kv_dim, kv_dim)
+				state.v:CopyTo(0, val_cache, state.token_pos * kv_dim, kv_dim)
 
-				for t = 0, position do
-					local vOffset = t * kvDim + floor(h / kvMul) * headSize
-					local a = state.att:GetFloat(attOffset + t)
-					state.xb:SaxyInPlace(xbOffset, valueCache, vOffset, headSize, a)
+				for h = 0, number_of_heads - 1 do
+					local qOffset = h * head_size
+					local attOffset = h * context_length
+
+					for t = 0, state.token_pos do
+						local key_cache_offset = t * kv_dim + floor(h / kv_mul) * head_size
+						local score = state.q:Dot(qOffset, key_cache, key_cache_offset, head_size)
+						score = score / sqrt_head_size
+						state.att:SetFloat(attOffset + t, score)
+					end
+
+					state.att:SoftMaxInPlace(attOffset, state.token_pos + 1)
+					local xbOffset = h * head_size
+					state.xb:FillInPlace(xbOffset, head_size, 0)
+
+					for t = 0, state.token_pos do
+						local vOffset = t * kv_dim + floor(h / kv_mul) * head_size
+						local a = state.att:GetFloat(attOffset + t)
+						state.xb:SaxpyInPlace(xbOffset, val_cache, vOffset, head_size, a)
+					end
 				end
+
+				weights.wo[l]:MatrixVectorMultiply(state.xb, state.xb2, dim, dim)
+				state.x:AddTensorInPlace(state.xb2)
+				state.xb:RmsNormInPlace(state.x, weights.rms_ffn_weight[l], dim, rms_norm_eps)
+				weights.w1[l]:MatrixVectorMultiply(state.xb, state.hb, hidden_dim, dim)
+				weights.w3[l]:MatrixVectorMultiply(state.xb, state.hb2, hidden_dim, dim)
+				state.hb:SigmoidInPlace()
+				state.hb:MultiplyTensorInPlace(state.hb2)
+				weights.w2[l]:MatrixVectorMultiply(state.hb, state.xb, dim, hidden_dim)
+				state.x:AddTensorInPlace(state.xb)
 			end
 
-			weights.wo[l]:MatrixVectorMultiply(state.xb, state.xb2, dim, dim)
-			state.x:AddTensorInPlace(state.xb2)
-			state.xb:RmsNormInPlace(state.x, weights.rms_ffn_weight[l], dim, config.rmsNormEps)
-			weights.w1[l]:MatrixVectorMultiply(state.xb, state.hb, config.hiddenDim, dim)
-			weights.w3[l]:MatrixVectorMultiply(state.xb, state.hb2, config.hiddenDim, dim)
-			state.hb:MapInPlace(0, state.hb.size, exp)
-			state.hb:MultiplyTensorInPlace(state.hb2)
-			weights.w2[l]:MatrixVectorMultiply(state.hb, state.xb, dim, config.hiddenDim)
-			state.x:AddTensorInPlace(state.xb)
+			state.x:RmsNormInPlace(state.x, weights.rms_final_weight, dim, rms_norm_eps)
+			weights.wcls:MatrixVectorMultiply(state.x, state.logits, vocabulary_size, dim)
 		end
 
-		state.x:RmsNormInPlace(state.x, weights.rms_final_weight, dim, config.rmsNormEps)
-		weights.wcls:MatrixVectorMultiply(state.x, state.logits, config.vocabularySize, dim)
-	end
+		local tokenizer = Tokenizer:new(metadata["tokenizer.ggml.tokens"], metadata["tokenizer.ggml.merges"])
+		local sampler = Sampler:new(vocabulary_size, temperature, topp)
+		local tokens = tokenizer:EncodeString(prompt)
+		local weights = Weights(tensors, number_of_layers)
+		local state = {
+			token = tokenizer:EncodeString("<|begin_of_text|>")[1] - 1,
+			token_pos = 0,
+			x = Tensor:F32(dim),
+			xb = Tensor:F32(dim),
+			xb2 = Tensor:F32(dim),
+			hb = Tensor:F32(hidden_dim),
+			hb2 = Tensor:F32(hidden_dim),
+			q = Tensor:F32(dim),
+			k = Tensor:F32(dim),
+			v = Tensor:F32(dim),
+			att = Tensor:F32(number_of_heads * context_length),
+			logits = Tensor:F32(vocabulary_size),
+			key_cache = {},
+			val_cache = {},
+		}
 
-	local token = tokenizer:EncodeString("<|begin_of_text|>")[1]
-	local next_token
-
-	for pos = 1, max_tokens do
-		forward(token - 1, pos - 1)
-
-		if pos < #tokens then
-			next_token = tokens[pos]
-		else
-			next_token = sampler:SampleToken(state.logits) + 1
+		for i = 1, number_of_layers do
+			state.key_cache[i] = Tensor:F32(context_length * kv_dim)
+			state.val_cache[i] = Tensor:F32(context_length * kv_dim)
 		end
 
-		token = next_token
-		local token_string = tokenizer:TokenToString(token)
+		while state.token_pos < max_tokens do
+			forward(state, weights)
+			local next_token
 
-		if pos > #tokens and token_string == "<|eot_id|>" then break end
+			if state.token_pos < #tokens then
+				next_token = tokens[state.token_pos + 1]
+			else
+				next_token = sampler:SampleToken(state.logits) + 1
+			end
 
-		token_callback(token_string)
+			state.token = next_token - 1
+
+			do
+				local token_string = tokenizer:TokenToString(state.token + 1)
+
+				if state.token_pos >= #tokens and token_string == "<|eot_id|>" then break end
+
+				token_callback(token_string)
+			end
+
+			state.token_pos = state.token_pos + 1
+		end
 	end
 end
 
