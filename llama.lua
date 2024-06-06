@@ -1,7 +1,7 @@
 local backend, model_path, prompt = ...
 require("debug.luajit_options")()
 local profiler = require("debug.profiler")
-_G.measure = require("debug.measure")
+local get_time = require("debug.get_time")
 local gguf = require("gguf")
 local Tokenizer = require("tokenizer")
 local Weights = require("weights")
@@ -153,7 +153,12 @@ local function load_and_run(model_path, prompt, token_callback)
 			state.val_cache[i] = Tensor:F32(context_length * kv_dim)
 		end
 
+		profiler.Start()
+		local total_time = 0
+		print("\n===================")
+
 		while state.token_pos < max_tokens do
+			local start_time = get_time()
 			forward(state, weights)
 			local next_token
 
@@ -167,14 +172,30 @@ local function load_and_run(model_path, prompt, token_callback)
 
 			do
 				local token_string = tokenizer:TokenToString(state.token + 1)
+				token_callback(token_string)
 
 				if state.token_pos >= #tokens and token_string == "<|eot_id|>" then break end
-
-				token_callback(token_string)
 			end
 
 			state.token_pos = state.token_pos + 1
+			total_time = total_time + get_time() - start_time
 		end
+
+		print("\n===================")
+
+		if backend == "cuda" then require("compute.gpu_cuda").dump_gpu_stats() end
+
+		profiler.Stop()
+		local token_count = (state.token_pos + 1)
+		local tokens_per_sec = 1 / (total_time / token_count)
+		print(
+			string.format(
+				"token count: %i\nelapsed: %.2fs\n%.2f tokens/s",
+				token_count,
+				total_time,
+				tokens_per_sec
+			)
+		)
 	end
 end
 

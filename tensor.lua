@@ -1,5 +1,7 @@
 local ffi = require("ffi")
 local Blob = require("blob")
+local math_exp = math.exp
+
 local Tensor = {}
 Tensor.__index = Tensor
 ffi.cdef[[
@@ -46,10 +48,6 @@ end
 
 do
 	function Tensor:Dot(thisOffset, that, thatOffset, size)
-		if self.blob.type == "Q4_0" then
-			return self:Dot2(thisOffset, that, thatOffset, size)
-		end
-
 		local result = 0
 
 		for j = 0, size - 1 do
@@ -78,12 +76,10 @@ do
 		for i = 0, dim0 - 1 do
 			out:SetFloat(i, self:Dot(i * dim1, that, 0, dim1))
 		end
-
-		if self.type == "Q4_0" then error("") end
 	end
 end
 
-do
+do -- avoid using these except for when debugging
 	function Tensor:Reduce(thisOffset, size, seed, reduce_callback)
 		local result = seed
 
@@ -94,36 +90,6 @@ do
 		return result
 	end
 
-	do
-		local function F(r, f)
-			return r + f
-		end
-
-		function Tensor:Sum(thisOffset, size)
-			return self:Reduce(thisOffset, size, 0, F)
-		end
-	end
-
-	do
-		local max = math.max
-
-		function Tensor:Max(thisOffset, size)
-			return self:Reduce(thisOffset, size, 0, max)
-		end
-	end
-end
-
-do
-	local function F(value, index, self, thatOffset, thisOffset)
-		return self:GetFloat(index - thatOffset + thisOffset)
-	end
-
-	function Tensor:CopyTo(thisOffset, that, thatOffset, size)
-		return that:MapInPlace(thatOffset, size, F, self, thatOffset, thisOffset)
-	end
-end
-
-do
 	function Tensor:MapInPlace(thisOffset, size, F, a, b, c, d)
 		local endOffset = thisOffset + size
 
@@ -133,66 +99,77 @@ do
 
 		return self
 	end
+end
 
-	do
-		local function F(value, index, div)
-			return value / div
+do
+	function Tensor:Sum(thisOffset, size)
+		local res = 0 
+		for i = 0, size - 1 do
+			res = res + self:GetFloat(thisOffset + i)
 		end
+		return res
+	end
 
-		function Tensor:DivideInPlace(thisOffset, size, value)
-			return self:MapInPlace(thisOffset, size, F, value)
+	local max = math.max
+
+	function Tensor:Max(thisOffset, size)
+		local res = 0 
+		for i = 0, size - 1 do
+			res = max(res, self:GetFloat(thisOffset + i))
+		end
+		return res
+	end
+end
+
+function Tensor:CopyTo(thisOffset, that, thatOffset, size)
+    for i = thatOffset, thatOffset + size - 1 do
+        that:SetFloat(i, self:GetFloat(i - thatOffset + thisOffset))
+    end
+end
+
+do
+	function Tensor:DivideInPlace(thisOffset, size, value)
+		for i = thisOffset, thisOffset + size - 1 do
+			self:SetFloat(i, self:GetFloat(i) / value)
 		end
 	end
 
-	do
-		local function F(value, index, that, thisOffset, thatOffset)
-			return value + that:GetFloat(index - thisOffset + thatOffset)
-		end
-
-		function Tensor:AddTensorInPlaceOffset(thisOffset, that, thatOffset, size)
-			return self:MapInPlace(thisOffset, size, F, that, thisOffset, thatOffset)
+	function Tensor:AddTensorInPlaceOffset(thisOffset, that, thatOffset, size)
+		for i = thisOffset, thisOffset + size - 1 do
+			self:SetFloat(i, self:GetFloat(i) + that:GetFloat(i - thisOffset + thatOffset))
 		end
 	end
 
 	function Tensor:AddTensorInPlace(that)
-		return self:AddTensorInPlaceOffset(0, that, 0, self.size)
+		for i = 0, self.size - 1 do
+			self:SetFloat(i, self:GetFloat(i) + that:GetFloat(i))
+		end
 	end
 
-	do
-		local function F(value, index, that, thisOffset, thatOffset)
-			return value * that:GetFloat(index - thisOffset + thatOffset)
-		end
-
-		function Tensor:MultiplyTensorInPlaceOffset(thisOffset, that, thatOffset, size)
-			return self:MapInPlace(thisOffset, size, F, that, thisOffset, thatOffset)
+	function Tensor:MultiplyTensorInPlaceOffset(thisOffset, that, thatOffset, size)
+		for i = thisOffset, thisOffset + size - 1 do
+			self:SetFloat(i, self:GetFloat(i) * that:GetFloat(i - thisOffset + thatOffset))
 		end
 	end
 
 	function Tensor:MultiplyTensorInPlace(that)
-		return self:MultiplyTensorInPlaceOffset(0, that, 0, self.size)
+		self:MultiplyTensorInPlaceOffset(0, that, 0, self.size)
 	end
 
-	do
-		local function F(value, index, identity)
-			return identity
-		end
-
-		function Tensor:FillInPlace(thisOffset, size, identity)
-			return self:MapInPlace(thisOffset, size, F, identity)
+	function Tensor:FillInPlace(thisOffset, size, identity)
+		for i = thisOffset, thisOffset + size - 1 do
+			self:SetFloat(i, identity)
 		end
 	end
 
-	do
-		local exp = math.exp
+	function Tensor:SoftMaxInPlace(thisOffset, size)
+		local max_value = self:Max(thisOffset, size)
 
-		local function F(num, index, max_value)
-			return exp(num - max_value)
+		for i = thisOffset, thisOffset + size - 1 do
+			self:SetFloat(i, math_exp(self:GetFloat(i) - max_value))
 		end
 
-		function Tensor:SoftMaxInPlace(thisOffset, size)
-			self:MapInPlace(thisOffset, size, F, self:Max(thisOffset, size))
-			return self:DivideInPlace(thisOffset, size, self:Sum(thisOffset, size))
-		end
+		self:DivideInPlace(thisOffset, size, self:Sum(thisOffset, size))
 	end
 end
 
@@ -200,36 +177,28 @@ function Tensor:SaxpyInPlace(thisOffset, that, thatOffset, size, a)
 	for i = 0, size - 1 do
 		self:SetFloat(thisOffset + i, a * that:GetFloat(thatOffset + i) + self:GetFloat(thisOffset + i))
 	end
-
-	return self
 end
 
-do
-	local math_exp = math.exp
-	local function F(value)
-		return value / (1.0 + math_exp(-value))
-	end
-
-	function Tensor:SigmoidInPlace()
-		self:MapInPlace(0, self.size, F)
+function Tensor:SigmoidInPlace()
+	for i = 0, self.size - 1 do
+		local value = self:GetFloat(i)
+		self:SetFloat(i, value / (1.0 + math_exp(-value)))
 	end
 end
 
-do
-	local function F1(acc, xi)
-		return acc + xi * xi
+function Tensor:RmsNormInPlace(x, weight, size, rmsNormEps)
+	local ss = 0
+	for i = 0, size - 1 do
+		local f = x:GetFloat(i)
+		ss = ss + f*f
 	end
 
-	local function F2(value, index, weight, ss, x)
-		return weight:GetFloat(index) * (ss * x:GetFloat(index))
-	end
+	ss = ss / size
+	ss = ss + rmsNormEps
+	ss = 1.0 / math.sqrt(ss)
 
-	function Tensor:RmsNormInPlace(x, weight, size, rmsNormEps)
-		local ss = x:Reduce(0, size, 0, F1)
-		ss = ss / size
-		ss = ss + rmsNormEps
-		ss = 1.0 / math.sqrt(ss)
-		self:MapInPlace(0, size, F2, weight, ss, x)
+	for i = 0, size - 1 do
+		self:SetFloat(i, weight:GetFloat(i) * (ss * x:GetFloat(i)))
 	end
 end
 

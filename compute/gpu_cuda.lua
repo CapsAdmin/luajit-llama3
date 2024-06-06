@@ -49,7 +49,7 @@ do
         int cuMemAlloc_v2(void **dptr, size_t bytesize);
         int cuMemcpyHtoD_v2(void *dstDevice, const void *srcHost, size_t ByteCount);
         int cuMemcpyDtoH_v2(void *dstHost, const void *srcDevice, size_t ByteCount);
-        int cuMemFree(void *dptr);
+        int cuMemFree_v2(void *dptr);
         int cuMemGetInfo_v2(size_t*free, size_t*total);
     ]]
 	ffi.cdef(header)
@@ -274,8 +274,7 @@ do
 			--print("\twith primary ctx flags: " .. table.concat(translate_context_flags(get_device_primary_flags(dev)), " "))
 			end
 
-			local left, total = gpu.get_memory()
-			print("\t" .. bytes_to_gb(left) .. "gb left out of " .. bytes_to_gb(total) .. "gb")
+			gpu.dump_gpu_stats()
 		end
 	end
 
@@ -304,11 +303,18 @@ do
 
 		if buffer then gpu.copy_to_device(ptr, buffer, size) end
 
+		return ptr
+	end
+
+	function gpu.free_on_device(ptr)
+		cuda.cuMemFree_v2(ptr[0])
+	end
+
+	function gpu.dump_gpu_stats()
 		local left, total = gpu.get_memory()
 		print(
-			"gpu allocation " .. bytes_to_gb(size) .. "gb - " .. bytes_to_gb(left) .. "gb left out of " .. bytes_to_gb(total) .. "gb"
+			"using " .. bytes_to_gb(left) .. " / " .. bytes_to_gb(total) .. " gb vram"
 		)
-		return ptr
 	end
 end
 

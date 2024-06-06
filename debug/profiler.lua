@@ -14,10 +14,6 @@ function profiler.Stop()
 
 	local stats_filter = {
 		{title = "all", filter = nil},
-		{title = "lexer", filter = "nattlua/lexer"},
-		{title = "parser", filter = "nattlua/parser"},
-		{title = "types", filter = "nattlua/types"},
-		{title = "analyzer", filter = "nattlua/analyzer"},
 	}
 	jit_profiler.EnableTraceAbortLogging(false)
 	jit_profiler.EnableStatisticalProfiling(false)
