@@ -88,11 +88,11 @@ do -- blob
         local block_size = 32
 
         local function mock_q40_blob(size)
-            local buffer = ffi.new("uint8_t[?]", size*block_size)
-            for i = 0, (size*32)-1 do
-                buffer[i] = i % 255
+            local b = Blob:Q4_0(size)
+            for i = 0, b.size - 1 do
+                b.blob[i] = i % 255
             end
-            return Blob:Q4_0(size, buffer) 
+            return b
         end
 
         local t = mock_q40_blob(512)
@@ -121,6 +121,24 @@ do -- blob
                 end
             end
             check(sum)
+        end
+    end
+
+    do
+        local ffi = require("ffi")
+        local b = Blob:F32(10)
+        b:Fill(0, b.size, 1337)
+        for i = 0, b.size - 1 do
+            assert(b:GetFloat(i) == 1337)
+        end
+    end
+
+    do
+        local ffi = require("ffi")
+        local b = Blob:F32(10)
+        b:Fill(0, b.size, 0)
+        for i = 0, b.size - 1 do
+            assert(b:GetFloat(i) == 0)
         end
     end
 end

@@ -3,6 +3,7 @@ Blob.__index = Blob
 local ffi = require("ffi")
 ffi.cdef[[
 	void *malloc( size_t size );
+	void *memcpy(void *dest, const void *src, size_t n);
 ]]
 
 function Blob:SetFloat(index, val)
@@ -13,8 +14,28 @@ function Blob:GetFloat(index)
 	error("NYI", 2)
 end
 
-function Blob:Fill(num)
-	ffi.fill(self.blob, self.byte_size, num)
+function Blob:CopyTo(thisOffset, that, thatOffset, size)
+	if self.type == "F32" and that.type == "F32" then
+		ffi.C.memcpy(that.blob + thatOffset, self.blob + thisOffset, size * self.byte_stride)
+	else
+		for i = thatOffset, thatOffset + size - 1 do
+			that:SetFloat(i, self:GetFloat(i - thatOffset + thisOffset))
+		end
+	end
+end
+
+function Blob:Fill(thisOffset, size, identity)
+	if self.type == "F32" then
+		if identity == 0 then
+			ffi.fill(self.blob + thisOffset, size * self.byte_stride, 0)
+		else
+			for i = thisOffset, thisOffset + size - 1 do
+				self:SetFloat(i, identity)
+			end
+		end
+	else
+		error("NYI", 2)
+	end	
 	return self
 end
 
@@ -36,7 +57,7 @@ function Blob:F32(size, blob)
 			end,
 		},
 		Blob
-	) --:Fill(size)
+	)-- :Fill(0, size, 0)
 end
 
 function Blob:F64(size, blob)
@@ -57,7 +78,7 @@ function Blob:F64(size, blob)
 			end,
 		},
 		Blob
-	) --:Fill(size)
+	)-- :Fill(0, size, 0)
 end
 
 do
@@ -82,7 +103,8 @@ do
 	end
 
 	function Blob:Q4_0(size, blob)
-		blob = ffi.cast("uint8_t*", blob or ffi.cast("uint8_t*", ffi.C.malloc(size)))
+		local byte_size = size * type_size
+		blob = ffi.cast("uint8_t*", blob or ffi.cast("uint8_t*", ffi.C.malloc(byte_size)))
 		local blob_f16 = ffi.cast(
 			[[
 			struct {	
@@ -94,7 +116,6 @@ do
 			blob
 		)
 		blob_f16 = ffi.cast("uint16_t*", blob)
-		local byte_size = size * type_size
 		assert(byte_size % block_size == 0, "Total size must be a multiple of the block size")
 		byte_size = byte_size / block_size
 		local floats = ffi.typeof("float[32]")
@@ -131,7 +152,7 @@ do
 				end,
 			},
 			Blob
-		) --:Fill(size)
+		)-- :Fill(0, size, 0)
 	end
 end
 

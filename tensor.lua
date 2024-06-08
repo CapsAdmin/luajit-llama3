@@ -130,28 +130,12 @@ do
 	end
 end
 
-do
-	function Tensor:CopyTo(thisOffset, that, thatOffset, size)
-		if self.blob.type == "F32" and that.blob.type == "F32" then
-			return self:CopyTo_memcpy_f32_f32(thisOffset, that, thatOffset, size)
-		end
+function Tensor:CopyTo(thisOffset, that, thatOffset, size)
+	self.blob:CopyTo(thisOffset, that.blob, thatOffset, size)
+end
 
-		for i = thatOffset, thatOffset + size - 1 do
-			that:SetFloat(i, self:GetFloat(i - thatOffset + thisOffset))
-		end
-	end
-
-	local ffi = require("ffi")
-
-	ffi.cdef[[
-		void *memcpy(void *dest, const void *src, size_t n);
-	]]
-
-	function Tensor:CopyTo_memcpy_f32_f32(thisOffset, that, thatOffset, size)
-		local src_ptr = self.blob.blob + thisOffset
-		local dest_ptr = that.blob.blob + thatOffset
-		ffi.C.memcpy(dest_ptr, src_ptr, size * self.blob.byte_stride)
-	end
+function Tensor:FillInPlace(thisOffset, size, identity)
+	return self.blob:Fill(thisOffset, size, identity)
 end
 
 do
@@ -182,13 +166,7 @@ do
 	function Tensor:MultiplyTensorInPlace(that)
 		self:MultiplyTensorInPlaceOffset(0, that, 0, self.size)
 	end
-
-	function Tensor:FillInPlace(thisOffset, size, identity)
-		for i = thisOffset, thisOffset + size - 1 do
-			self:SetFloat(i, identity)
-		end
-	end
-
+	
 	function Tensor:SoftMaxInPlace(thisOffset, size)
 		local max_value = self:Max(thisOffset, size)
 
