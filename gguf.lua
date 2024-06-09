@@ -13,37 +13,37 @@ local GGMLType, GGMLTypeMap = (
 		local INTEGER = 4
 		local FLOAT16 = 2 -- Assuming 16-bit half-precision float (2 bytes)
 		local GGMLType = {
-			{name = "F32", typeSize = FLOAT, blockSize = 1},
-			{name = "F16", typeSize = FLOAT16, blockSize = 1},
-			{name = "Q4_0", typeSize = FLOAT16 + 16 * BYTE, blockSize = 32},
-			{name = "Q4_1", typeSize = 2 * FLOAT16 + 16 * BYTE, blockSize = 32},
-			{name = "UNSUPPORTED_Q4_2", typeSize = INTEGER, blockSize = 1},
-			{name = "UNSUPPORTED_Q4_3", typeSize = INTEGER, blockSize = 1},
-			{name = "Q5_0", typeSize = INTEGER, blockSize = 1},
-			{name = "Q5_1", typeSize = INTEGER, blockSize = 1},
-			{name = "Q8_0", typeSize = FLOAT16 + 32 * BYTE, blockSize = 32},
-			{name = "Q8_1", typeSize = 32 * BYTE + 2 * FLOAT, blockSize = 32},
-			{name = "Q2_K", typeSize = INTEGER, blockSize = 1},
-			{name = "Q3_K", typeSize = INTEGER, blockSize = 1},
+			{name = "F32", type_size = FLOAT, block_size = 1},
+			{name = "F16", type_size = FLOAT16, block_size = 1},
+			{name = "Q4_0", type_size = FLOAT16 + 16 * BYTE, block_size = 32},
+			{name = "Q4_1", type_size = 2 * FLOAT16 + 16 * BYTE, block_size = 32},
+			{name = "UNSUPPORTED_Q4_2", type_size = INTEGER, block_size = 1},
+			{name = "UNSUPPORTED_Q4_3", type_size = INTEGER, block_size = 1},
+			{name = "Q5_0", type_size = INTEGER, block_size = 1},
+			{name = "Q5_1", type_size = INTEGER, block_size = 1},
+			{name = "Q8_0", type_size = FLOAT16 + 32 * BYTE, block_size = 32},
+			{name = "Q8_1", type_size = 32 * BYTE + 2 * FLOAT, block_size = 32},
+			{name = "Q2_K", type_size = INTEGER, block_size = 1},
+			{name = "Q3_K", type_size = INTEGER, block_size = 1},
 			{
 				name = "Q4_K",
-				typeSize = 2 * FLOAT16 + (256 / 16 / 8 * 6) + 256 / 2,
-				blockSize = 256,
+				type_size = 2 * FLOAT16 + (256 / 16 / 8 * 6) + 256 / 2,
+				block_size = 256,
 			},
 			{
 				name = "Q5_K",
-				typeSize = 2 * FLOAT16 + (256 / 16 / 8 * 6) + 256 / 8 + 256 / 2,
-				blockSize = 256,
+				type_size = 2 * FLOAT16 + (256 / 16 / 8 * 6) + 256 / 8 + 256 / 2,
+				block_size = 256,
 			},
 			{
 				name = "Q6_K",
-				typeSize = 256 / 2 + 256 / 4 + 256 / 16 + FLOAT16,
-				blockSize = 256,
+				type_size = 256 / 2 + 256 / 4 + 256 / 16 + FLOAT16,
+				block_size = 256,
 			},
-			{name = "Q8_K", typeSize = INTEGER, blockSize = 1},
-			{name = "I8", typeSize = BYTE, blockSize = 1},
-			{name = "I16", typeSize = SHORT, blockSize = 1},
-			{name = "I32", typeSize = INTEGER, blockSize = 1},
+			{name = "Q8_K", type_size = INTEGER, block_size = 1},
+			{name = "I8", type_size = BYTE, block_size = 1},
+			{name = "I16", type_size = SHORT, block_size = 1},
+			{name = "I32", type_size = INTEGER, block_size = 1},
 		}
 		local map = {}
 
@@ -184,41 +184,24 @@ local function load_gguf(path)
 		metadata[key] = val
 	end
 
-	local function get_tensor_size(dimensions_map)
-		local t = 1
-
-		for i, v in ipairs(dimensions_map) do
-			t = t * v
-		end
-
-		return t
-	end
-
-	local function get_tensor_byte_size(type_info, dimensions_map)
-		local t = get_tensor_size(dimensions_map)
-		t = t * type_info.typeSize
-		assert(t % type_info.blockSize == 0, "Total size must be a multiple of the block size")
-		t = t / type_info.blockSize
-		return t
-	end
-
 	local tensors = {}
 
 	for i = 1, tonumber(tensor_count) do
 		local name = reader.STRING(file)
 		local dimensions_map = {}
+		local size = 1
 
 		for i = 1, reader.UINT32(file) do
-			dimensions_map[i] = reader.UINT64(file)
+			local dim = reader.UINT64(file)
+			dimensions_map[i] = dim
+			size = size * dim
 		end
 
 		local type_info = assert(GGMLType[reader.UINT32(file) + 1], "invalid ggml typeid")
 		local offset = reader.UINT64(file)
 		tensors[i] = {
 			name = name,
-			byte_size = get_tensor_byte_size(type_info, dimensions_map),
-			size = get_tensor_size(dimensions_map),
-			ggml_typeid = ggml_typeid,
+			size = size,
 			type_info = type_info,
 			offset = offset,
 		}
@@ -244,6 +227,7 @@ local function load_gguf(path)
 
 	for i, tensor in ipairs(tensors) do
 		tensor.blob = mega_buffer + tensor.offset
+		tensor.offset = nil
 
 		-- random sanity check
 		if tensor.name == "blk.0.attn_norm.weight" then

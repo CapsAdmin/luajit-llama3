@@ -83,9 +83,9 @@ end
 
 do
 	local ggf = require("gguf")
-	local block_size = ggf.GGMLTypeMap.Q4_0.blockSize
+	local block_size = ggf.GGMLTypeMap.Q4_0.block_size
 	local half_block_size = block_size / 2
-	local type_size = ggf.GGMLTypeMap.Q4_0.typeSize
+	local type_size = ggf.GGMLTypeMap.Q4_0.type_size
 	local half_type_size = type_size / 2
 	local rshift = bit.rshift
 	local band = bit.band
