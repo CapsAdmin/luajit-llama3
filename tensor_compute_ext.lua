@@ -14,27 +14,36 @@ local function use_pthreads()
 end
 
 local function use_cuda()
+    local ffi = require("ffi")
     local gpu = require("compute.gpu_cuda")
     gpu.init_with_device(0)
 
-    local kernel_q40_f32_f32 = gpu.compile_kernel([[
+    local cache
+    do
+        cache = ffi.new("float[65536]")
+        local function host_f16_to_f32(bits)
+            local sign = 1 - bit.band(bit.rshift(bits, 15), 0x1) * 2
+            local exponent = bit.band(bit.rshift(bits, 10), 0x1F)
+            local mantissa = bit.band(bits, 0x3FF)
+            local base = mantissa + 1024
+            return sign * math.ldexp(base, exponent - 25)
+        end
+        for i = 0, 65536 do
+            cache[i] = host_f16_to_f32(i)
+        end
+    end
+
+    local kernel_q40_f32_f32 = gpu.compile_kernel([=[
         #define BLOCK_SIZE 32
         #define HALF_BLOCK_SIZE 16
         #define TYPE_SIZE 18
         #define HALF_TYPE_SIZE 9
-
-        __device__ float f16_to_f32(unsigned short bits) {
-            int sign = 1 - ((bits >> 15) & 0x1) * 2;
-            int exponent = (bits >> 10) & 0x1F;
-            int mantissa = bits & 0x3FF;
-            int base = (float)(mantissa + 1024);
-            return (float)sign * (float)ldexpf(base, exponent - 25);
-        }
+        __device__ float f16_to_f32_cache[65536];
 
         __device__ void decode_float_block(const unsigned char *blob, int block_index, float *f) {
             const unsigned short* blob_f16 = (const unsigned short*)blob;
             
-            float scale = f16_to_f32(blob_f16[block_index * HALF_TYPE_SIZE]);
+            float scale = f16_to_f32_cache[blob_f16[block_index * HALF_TYPE_SIZE]];
             
             int block_offset = block_index * TYPE_SIZE;
             for (int i = 0; i < 16; i++) {
@@ -64,7 +73,9 @@ local function use_cuda()
             }
             out[row] = result;
         }
-    ]], "kernel_q40_f32_f32")
+    ]=], "kernel_q40_f32_f32", {
+        f16_to_f32_cache = {data = cache, size = ffi.sizeof(cache)}
+    })
 
 
     local kernel_f32_f32_f32 = gpu.compile_kernel([[

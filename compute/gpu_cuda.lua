@@ -51,6 +51,12 @@ do
         int cuMemcpyDtoH_v2(void *dstHost, const void *srcDevice, size_t ByteCount);
         int cuMemFree_v2(void *dptr);
         int cuMemGetInfo_v2(size_t*free, size_t*total);
+		int cuModuleGetGlobal_v2(void **dptr, size_t *bytes, CUmodule hmod, const char *name);
+
+
+		int cuModuleGetModule(CUmodule *module, CUfunction hfunc);
+		int cuMemcpyDtoD_v2(void* dstDevice, void* srcDevice, size_t ByteCount);
+
     ]]
 	ffi.cdef(header)
 	local cudaMemcpyHostToDevice = 1
@@ -368,13 +374,39 @@ do
 		return ffi.string(ptx, ptxSize[0])
 	end
 
-	function gpu.compile_kernel(code, name)
+	function gpu.compile_kernel(code, name, variables)
 		local module = ffi.new("CUmodule[1]")
 		cuda.cuModuleLoadData(module, source_to_ptx(code))
 		local kernel = ffi.new("CUfunction[1]")
 		cuda.cuModuleGetFunction(kernel, module[0], name)
 		assert(kernel[0] ~= nil)
+
+		if variables then
+			for k,v in pairs(variables) do
+				gpu.memcpy_to_symbol(module[0], k, v.data, v.size)
+			end
+		end
+
 		return kernel[0]
+	end
+
+	function gpu.memcpy_to_symbol(module, symbol_name, host_data, size)
+		local device_ptr = ffi.new("void*[1]")
+		cuda.cuMemAlloc_v2(device_ptr, size)
+		
+		-- Copy data from host to device
+		cuda.cuMemcpyHtoD_v2(ffi.cast("void*", device_ptr[0]), host_data, size)
+		
+		-- Get the global symbol
+		local device_symbol = ffi.new("void*[1]")
+		local symbol_size = ffi.new("size_t[1]")
+		cuda.cuModuleGetGlobal_v2(device_symbol, symbol_size, module, symbol_name)
+		
+		-- Copy from allocated memory to the symbol
+		cuda.cuMemcpyDtoD_v2(ffi.cast("void*", device_symbol[0]), ffi.cast("void*", device_ptr[0]), size)
+		
+		-- Free the temporary allocation
+		cuda.cuMemFree_v2(device_ptr[0])
 	end
 end
 
