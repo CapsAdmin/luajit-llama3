@@ -46,9 +46,42 @@ return function(backend)
     }
     elseif backend == "pthreads" then
         local pthreads = require("compute.cpu_pthreads")
-        local threaded_for = pthreads.threaded_for(function(dim1, out, self, that, thread_data)	
+        local threaded_for = pthreads.threaded_for(function(dim1, out, a, b, thread_data)	
             local i = thread_data
-            out:SetFloat(i, self:Dot(i * dim1, that, 0, dim1))
+
+            if a.blob.type == "Q4_0" and b.blob.type == "F32" and out.blob.type == "F32" then
+                local Get32FloatsFromBlockIndex = a.blob.Get32FloatsFromBlockIndex
+                a = a.blob.blob
+                b = b.blob.blob
+                out = out.blob.blob
+
+                local result = 0
+                local block_index = (i * dim1) / 32
+        
+                for j = 0, (dim1 / 32) - 1 do
+                    local float_block = Get32FloatsFromBlockIndex(block_index + j)
+        
+                    for k = 0, 31 do
+                        result = result + float_block[k] * b[j * 32 + k]
+                    end
+                end
+        
+                out[i] = result
+            elseif a.blob.type == "F32" and b.blob.type == "F32" and out.blob.type == "F32" then
+                a = a.blob.blob
+                b = b.blob.blob
+                out = out.blob.blob
+
+                local result = 0
+                local offset = i * dim1
+        
+                for j = 0, dim1 - 1 do
+                    result = result + a[offset + j] * b[j]
+                end
+        
+                out[i] = result
+            end
+
         end, {"double", "@tensor", "@tensor", "@tensor"}, pthreads.get_cpu_threads())
         
         return {
@@ -56,6 +89,32 @@ return function(backend)
                 threaded_for(dim0, dim1, out, a, b)
             end
         }
+
+        --[[
+            function Tensor:Dot(thisOffset, that, thatOffset, size)
+                local result = 0
+
+                for j = 0, size - 1 do
+                    result = result + self:GetFloat(thisOffset + j) * that:GetFloat(thatOffset + j)
+                end
+
+                return result
+            end
+
+        	function Tensor:MatrixVectorMultiply(that, out, dim0, dim1)
+                for i = 0, dim0 - 1 do
+                    local result = 0
+            
+                    for j = 0, dim1 - 1 do
+                        result = result + self:GetFloat(i * dim1 + j) * that:GetFloat(j)
+                    end
+            
+                    out:SetFloat(i, result)
+                end
+            end
+
+            
+            ]]
     elseif backend == "cuda" then
         local ffi = require("ffi")
         local gpu = require("compute.gpu_cuda")

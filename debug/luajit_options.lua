@@ -136,7 +136,7 @@ function jit_options.SetOptimized()
 			maxmcode = 128000,
 			sizemcode = jit.arch == "arm64" and 50000 or nil,
 			minstitch = 3,
-			maxrecord = 2000,
+			maxrecord = 20000,
 			maxirconst = 8000,
 			maxside = 5000,
 			maxsnap = 5000,
