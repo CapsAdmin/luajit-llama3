@@ -107,7 +107,7 @@ do -- blob
         do
             local sum = 0
             for i = 0, t.size-1 do 
-                sum = sum + t:GetFloat(i)
+                sum = sum + t.GetFloat(i)
             end
             check(sum)
         end
@@ -115,7 +115,7 @@ do -- blob
         do
             local sum = 0
             for i = 0, (t.size/block_size) - 1 do
-                local floats = t:Get32FloatsFromBlockIndex(i)
+                local floats = t.Get32FloatsFromBlockIndex(i)
                 for j = 0, 31 do
                     sum = sum + floats[j]
                 end
@@ -129,7 +129,7 @@ do -- blob
         local b = Blob:F32(10)
         b:Fill(0, b.size, 1337)
         for i = 0, b.size - 1 do
-            assert(b:GetFloat(i) == 1337)
+            assert(b.GetFloat(i) == 1337)
         end
     end
 
@@ -138,7 +138,7 @@ do -- blob
         local b = Blob:F32(10)
         b:Fill(0, b.size, 0)
         for i = 0, b.size - 1 do
-            assert(b:GetFloat(i) == 0)
+            assert(b.GetFloat(i) == 0)
         end
     end
 end

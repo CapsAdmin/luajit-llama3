@@ -6,11 +6,11 @@ ffi.cdef[[
 	void *memcpy(void *dest, const void *src, size_t n);
 ]]
 
-function Blob:SetFloat(index, val)
+function Blob.SetFloat(index, val)
 	error("NYI")
 end
 
-function Blob:GetFloat(index)
+function Blob.GetFloat(index)
 	error("NYI", 2)
 end
 
@@ -19,7 +19,7 @@ function Blob:CopyTo(thisOffset, that, thatOffset, size)
 		ffi.C.memcpy(that.blob + thatOffset, self.blob + thisOffset, size * self.byte_stride)
 	else
 		for i = thatOffset, thatOffset + size - 1 do
-			that:SetFloat(i, self:GetFloat(i - thatOffset + thisOffset))
+			that.SetFloat(i, self.GetFloat(i - thatOffset + thisOffset))
 		end
 	end
 end
@@ -30,7 +30,7 @@ function Blob:Fill(thisOffset, size, identity)
 			ffi.fill(self.blob + thisOffset, size * self.byte_stride, 0)
 		else
 			for i = thisOffset, thisOffset + size - 1 do
-				self:SetFloat(i, identity)
+				self.SetFloat(i, identity)
 			end
 		end
 	else
@@ -49,10 +49,10 @@ function Blob:F32(size, blob)
 			size = tonumber(size),
 			byte_size = tonumber(size * stride),
 			byte_stride = stride,
-			SetFloat = function(s, index, val)
+			SetFloat = function(index, val)
 				blob[index] = val
 			end,
-			GetFloat = function(s, index)
+			GetFloat = function(index)
 				return blob[index]
 			end,
 		},
@@ -70,10 +70,10 @@ function Blob:F64(size, blob)
 			size = tonumber(size),
 			byte_size = tonumber(size * stride),
 			byte_stride = stride,
-			SetFloat = function(s, index, val)
+			SetFloat = function(index, val)
 				blob[index] = val
 			end,
-			GetFloat = function(s, index)
+			GetFloat = function(index)
 				return blob[index]
 			end,
 		},
@@ -102,6 +102,12 @@ do
 		return sign * ldexp(mantissa + 1024, exponent - 25)
 	end
 
+	local cached_f16_to_f32 = ffi.new("float[65536]")
+
+	for i = 0, 65536 - 1 do
+		cached_f16_to_f32[i] = f16_to_f32(i)
+	end
+
 	function Blob:Q4_0(size, blob)
 		local byte_size = size * type_size
 		blob = ffi.cast("uint8_t*", blob or ffi.cast("uint8_t*", ffi.C.malloc(byte_size)))
@@ -128,18 +134,18 @@ do
 				byte_size = tonumber(byte_size),
 				byte_stride = 1,
 				blob_f16 = blob_f16,
-				GetFloat = function(s, index)
+				GetFloat = function(index)
 					local block_index = rshift(index, 5)
 					local block_offset = block_index * type_size
-					local scale = f16_to_f32(blob_f16[block_index * half_type_size])
+					local scale = cached_f16_to_f32[blob_f16[block_index * half_type_size]]
 					local modIndex = band(index, block_size - 1)
 					local base_offset = block_offset + band(modIndex, half_block_size - 1)
 					local shift_amount = rshift(modIndex, 4) * 4
 					local quant = band(rshift(blob[2 + base_offset], shift_amount), 0x0F)
 					return (quant - 8) * scale
 				end,
-				Get32FloatsFromBlockIndex = function(s, block_index)
-					local scale = f16_to_f32(blob_f16[block_index * half_type_size])
+				Get32FloatsFromBlockIndex = function(block_index)
+					local scale = cached_f16_to_f32[blob_f16[block_index * half_type_size]]
 					local block_offset = block_index * type_size
 
 					for modIndex = 0, 16 - 1 do

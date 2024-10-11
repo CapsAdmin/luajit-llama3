@@ -31,11 +31,11 @@ function Tensor:new(blob)
 end
 
 function Tensor:GetFloat(i)
-	return self.blob:GetFloat(i)
+	return self.blob.GetFloat(i)
 end
 
 function Tensor:SetFloat(i, v)
-	return self.blob:SetFloat(i, v)
+	return self.blob.SetFloat(i, v)
 end
 
 function Tensor:SetName(n)
@@ -84,6 +84,15 @@ do
 			end
 	
 			out:SetFloat(i, result)
+		end
+	end
+
+	function Tensor:UseComputeKernel(backend)
+		local build_kernels = require("tensor_kernels")
+
+		for k, v in pairs(build_kernels(backend)) do
+			assert(Tensor[k], k .. " is not a function")
+			Tensor[k] = v
 		end
 	end
 end

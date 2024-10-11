@@ -1,5 +1,5 @@
 local Tensor = require("tensor")
-require("tensor_compute_ext").use_cuda()
+Tensor:UseComputeKernel("cuda")
 local measure = require("debug.measure")
 
 function Tensor.MatrixVectorMultiplyCPU(a, b, out, dim0, dim1)
@@ -52,11 +52,50 @@ local variants = {
 	},
 }
 
+do
+	-- upload and preallocate tensor memory for better performance and vram usage
+	local total_size = 0
+	local gpu = require("compute.gpu_cuda")
+	measure("uploading tensors to gpu")
+	local size_map = {}
+
+	for _, tensors in ipairs(variants) do
+		for key, tensor in pairs(tensors) do
+			if getmetatable(tensor) == Tensor then
+				if tensor.name and tensor.name:find(".weight") then
+					-- weight tensors are static
+					tensor.blob.gpu_ptr = gpu.allocate_on_device(tensor.blob.byte_size, tensor.blob.blob)
+					total_size = total_size + tensor.blob.byte_size
+				else
+					-- state tensors are dynamic and are uploaded on each Tensor.MatrixVectorMultiply call
+					-- so we can allocate and share memory for each byte size
+					size_map[tensor.blob.byte_size] = size_map[tensor.blob.byte_size] or {}
+					table.insert(size_map[tensor.blob.byte_size], tensor)
+				end
+			end
+		end
+	end
+
+	for byte_size, tensors in pairs(size_map) do
+		local gpu_ptr = gpu.allocate_on_device(byte_size)
+
+		for _, tensor in ipairs(tensors) do
+			tensor.blob.gpu_ptr = gpu_ptr
+		end
+
+		total_size = total_size + byte_size
+	end
+
+	measure()
+	print(string.format("%.2fgb tensors allocated on GPU", total_size / 1024 / 1024 / 1024))
+	gpu.dump_gpu_stats()
+end
+
 -- zero fill, otherwise GetFloat might return nil or nan
 for i,v in ipairs(variants) do
-	v.out.blob:Fill(0)
-	v.a.blob:Fill(0)
-	v.b.blob:Fill(0)
+	v.out.blob:Fill(0, v.out.blob.size, 0)
+	v.a.blob:Fill(0, v.out.blob.size, 0)
+	v.b.blob:Fill(0, v.out.blob.size, 0)
 end
 
 local total = 0

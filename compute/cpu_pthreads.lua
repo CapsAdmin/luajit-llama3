@@ -180,7 +180,7 @@ local function threaded_for(encode_code, lua_header_code, lua_code, thread_count
 	end
 end
 
-local function threaded_for2(callback, ctypes, thread_count)
+local function threaded_for2(callback, ctypes, thread_count, header_code)
 	local bcode = string.dump(callback)
 	local upvalues = {}
 
@@ -211,6 +211,13 @@ local function threaded_for2(callback, ctypes, thread_count)
 			unpack_code = unpack_code .. "local " .. name .. " = ffi.string(data." .. name .. ", data." .. name .. "_len)\n"
 			encode_code = encode_code .. "table.insert(data, ffi.cast('uint8_t*', " .. name .. "))\n"
 			encode_code = encode_code .. "table.insert(data, #" .. name .. ")\n"
+		elseif type == "@function" then
+			struct_code = struct_code .. "uint8_t * " .. name .. ";\n"
+			struct_code = struct_code .. "uint32_t " .. name .. "_len;\n"
+			unpack_code = unpack_code .. "local " .. name .. " = loadstring(ffi.string(data." .. name .. ", data." .. name .. "_len))\n"
+			encode_code = encode_code .. "local bcode_"..name.." = string.dump("..name..")\n"
+			encode_code = encode_code .. "table.insert(data, ffi.cast('uint8_t*', bcode_" .. name .. "))\n"
+			encode_code = encode_code .. "table.insert(data, #bcode_" .. name .. ")\n"
 		else
 			struct_code = struct_code .. type .. " " .. name .. ";\n"
 			unpack_code = unpack_code .. "local " .. name .. " = data." .. name .. "\n"
@@ -224,8 +231,10 @@ local function threaded_for2(callback, ctypes, thread_count)
 			uint32_t lua_bcode_len;
 		]],
 		[[
+			require("debug.luajit_options").SetOptimized()
 			local ffi = require("ffi")
 			local Tensor = require("tensor")
+
 			local lua_func
 		]],
 		unpack_code .. [[

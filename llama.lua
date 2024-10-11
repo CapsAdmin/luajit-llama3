@@ -1,14 +1,13 @@
 local backend, model_path, prompt = ...
-require("debug.luajit_options")()
+require("debug.luajit_options").SetOptimized()
 local profiler = require("debug.profiler")
 local get_time = require("debug.get_time")
 local measure = require("debug.measure")
 local gguf = require("gguf")
 local Tokenizer = require("tokenizer")
 local Tensor = require("tensor")
+Tensor:UseComputeKernel(backend)
 local Sampler = require("topp_sampler")
-
-if backend ~= "lua" then require("tensor_compute_ext")["use_" .. backend]() end
 
 local function load_and_run(model_path, prompt, token_callback)
 	local context_length = 512
@@ -234,7 +233,7 @@ local function load_and_run(model_path, prompt, token_callback)
 			print(string.format("%.2fgb tensors allocated on CPU", total_size / 1024 / 1024 / 1024))
 		end
 
-		--profiler.Start()
+		profiler.Start()
 		local total_time = 0
 		print("\n\n\n")
 		math.randomseed(seed)
@@ -269,7 +268,7 @@ local function load_and_run(model_path, prompt, token_callback)
 
 		if backend == "cuda" then require("compute.gpu_cuda").dump_gpu_stats() end
 
-		--profiler.Stop()
+		profiler.Stop()
 		local token_count = (state.token_pos + 1)
 		local tokens_per_sec = 1 / (total_time / token_count)
 		print(
