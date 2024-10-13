@@ -111,17 +111,7 @@ do
 	function Blob:Q4_0(size, blob)
 		local byte_size = size * type_size
 		blob = ffi.cast("uint8_t*", blob or ffi.cast("uint8_t*", ffi.C.malloc(byte_size)))
-		local blob_f16 = ffi.cast(
-			[[
-			struct {	
-				uint16_t mantissa : 10;
-				uint16_t exponent : 5;
-				uint16_t sign : 1;
-			}*
-		]],
-			blob
-		)
-		blob_f16 = ffi.cast("uint16_t*", blob)
+		local blob_f16 = ffi.cast("uint16_t*", blob)
 		assert(byte_size % block_size == 0, "Total size must be a multiple of the block size")
 		byte_size = byte_size / block_size
 		local floats = ffi.typeof("float[32]")
@@ -134,6 +124,10 @@ do
 				byte_size = tonumber(byte_size),
 				byte_stride = 1,
 				blob_f16 = blob_f16,
+				cached_f16_to_f32 = cached_f16_to_f32,
+				half_type_size = half_type_size,
+				type_size = type_size,
+				half_block_size = half_block_size,
 				GetFloat = function(index)
 					local block_index = rshift(index, 5)
 					local block_offset = block_index * type_size

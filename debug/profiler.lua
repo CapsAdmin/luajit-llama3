@@ -23,6 +23,7 @@ function profiler.Stop()
 
 	local traces, aborted = trace_tracker.Stop()
 	print("\nluajit traces that were aborted and stitched:")
+	print(trace_tracker.ToStringTraceTree(traces))
 	print(trace_tracker.ToStringProblematicTraces(traces, aborted))
 	print("\nprofiler statistics:")
 	print(

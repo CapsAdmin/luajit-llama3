@@ -60,23 +60,8 @@ do
 		return result
 	end
 
-	function Tensor:Dot2(thisOffset, that, thatOffset, size)
-		local result = 0
-		thisOffset = thisOffset / 32
-
-		for j = 0, (size / 32) - 1 do
-			local floats = self.blob:Get32FloatsFromBlockIndex(thisOffset + j)
-
-			for k = 0, 31 do
-				result = result + floats[k] * that:GetFloat(k + thatOffset + j)
-			end
-		end
-
-		return result
-	end
-
-	function Tensor:MatrixVectorMultiply(that, out, dim0, dim1)
-		for i = 0, dim0 - 1 do
+	function Tensor:MatrixVectorMultiply(that, out, dim0, dim1, offset)
+		for i = offset or 0, dim0 - 1 do
 			local result = 0
 	
 			for j = 0, dim1 - 1 do
@@ -84,15 +69,6 @@ do
 			end
 	
 			out:SetFloat(i, result)
-		end
-	end
-
-	function Tensor:UseComputeKernel(backend)
-		local build_kernels = require("tensor_kernels")
-
-		for k, v in pairs(build_kernels(backend)) do
-			assert(Tensor[k], k .. " is not a function")
-			Tensor[k] = v
 		end
 	end
 end
@@ -223,6 +199,16 @@ do
 
 	function Tensor:ThreadDeserialize(ptr)
 		return Tensor:new(Blob:ThreadDeserialize(ptr))
+	end
+end
+
+function Tensor:UseComputeKernel(backend)
+	local build_kernels = require("tensor_kernels")
+
+	for k, v in pairs(build_kernels(backend)) do
+		assert(Tensor[k], k .. " is not a function")
+		Tensor[k.."Old"] = Tensor[k]
+		Tensor[k] = v
 	end
 end
 

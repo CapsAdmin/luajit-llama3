@@ -187,9 +187,15 @@ local function threaded_for2(callback, ctypes, thread_count, header_code)
 	for i = 1, math.huge do
 		local name = debug.getlocal(callback, i)
 
-		if not name or name == "thread_data" then break end
+		if not name then break end
 
-		upvalues[i] = name
+		if i == 1 then
+			assert(name == "thread_start")
+		elseif i == 2 then
+			assert(name == "thread_stop")
+		else
+			table.insert(upvalues, name)
+		end
 	end
 
 	assert(#upvalues == #ctypes)
@@ -234,14 +240,13 @@ local function threaded_for2(callback, ctypes, thread_count, header_code)
 			require("debug.luajit_options").SetOptimized()
 			local ffi = require("ffi")
 			local Tensor = require("tensor")
+			Tensor:UseComputeKernel("lua")
 
 			local lua_func
 		]],
 		unpack_code .. [[
 			lua_func = lua_func or loadstring(ffi.string(data.lua_bcode, data.lua_bcode_len))
-			for h = start, stop - 1 do
-				lua_func(]] .. table.concat(upvalues, ", ") .. [[, h)
-			end
+			lua_func(start, stop, ]] .. table.concat(upvalues, ", ") .. [[)
 		]],
 		thread_count
 	)

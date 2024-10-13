@@ -3,25 +3,87 @@ return function(backend)
 
     if backend == "lua" then
 
-        local function kernel_q40_f32_f32(Get32FloatsFromBlockIndex, b, out, dim0, dim1)
-            for row = 0, dim0 - 1 do
+        local rshift = bit.rshift
+        local band = bit.band
+
+        local function kernel_q40_f32_f32(a, b, out, dim0, dim1, offset, cached_f16_to_f32, blob_f16, half_type_size, type_size, half_block_size)
+            for row = offset or 0, dim0 - 1 do
                 local result = 0
+                
                 local block_index = (row * dim1) / 32
-        
                 for j = 0, (dim1 / 32) - 1 do
-                    local float_block = Get32FloatsFromBlockIndex(block_index + j)
-        
-                    for k = 0, 31 do
-                        result = result + float_block[k] * b[j * 32 + k]
+                    local scale = cached_f16_to_f32[blob_f16[(block_index + j) * half_type_size]]
+					local block_offset = ((block_index + j) * type_size) + 2
+                    
+                    --[[
+                    -- a little bit slower, dunno why it's not being unrolled?
+                    for i = 0, 15 do
+                        local byte = a[block_offset + band(i, half_block_size - 1) + 2]
+                        result = result + (band(byte, 0x0F) - 8) * b[j * 32 + i] * scale
+                        result = result + (band(rshift(byte, 4), 0x0F) - 8) * b[j * 32 + i + 15] * scale
                     end
+                    ]]
+
+                    local b0 = a[block_offset + band(0, half_block_size - 1)]
+                    local b1 = a[block_offset + band(1, half_block_size - 1)]
+                    local b2 = a[block_offset + band(2, half_block_size - 1)]
+                    local b3 = a[block_offset + band(3, half_block_size - 1)]
+                    local b4 = a[block_offset + band(4, half_block_size - 1)]
+                    local b5 = a[block_offset + band(5, half_block_size - 1)]
+                    local b6 = a[block_offset + band(6, half_block_size - 1)]
+                    local b7 = a[block_offset + band(7, half_block_size - 1)]
+                    local b8 = a[block_offset + band(8, half_block_size - 1)]
+                    local b9 = a[block_offset + band(9, half_block_size - 1)]
+                    local b10 = a[block_offset + band(10, half_block_size - 1)]
+                    local b11 = a[block_offset + band(11, half_block_size - 1)]
+                    local b12 = a[block_offset + band(12, half_block_size - 1)]
+                    local b13 = a[block_offset + band(13, half_block_size - 1)]
+                    local b14 = a[block_offset + band(14, half_block_size - 1)]
+                    local b15 = a[block_offset + band(15, half_block_size - 1)]
+
+                    j = j * 32
+
+                    result = result + (band(b0, 0x0F) - 8) * scale * b[j + 0]
+                    result = result + (band(b1, 0x0F) - 8) * scale * b[j + 1]
+                    result = result + (band(b2, 0x0F) - 8) * scale * b[j + 2]
+                    result = result + (band(b3, 0x0F) - 8) * scale * b[j + 3]
+                    result = result + (band(b4, 0x0F) - 8) * scale * b[j + 4]
+                    result = result + (band(b5, 0x0F) - 8) * scale * b[j + 5]
+                    result = result + (band(b6, 0x0F) - 8) * scale * b[j + 6]
+                    result = result + (band(b7, 0x0F) - 8) * scale * b[j + 7]
+                    result = result + (band(b8, 0x0F) - 8) * scale * b[j + 8]
+                    result = result + (band(b9, 0x0F) - 8) * scale * b[j + 9]
+                    result = result + (band(b10, 0x0F) - 8) * scale * b[j + 10]
+                    result = result + (band(b11, 0x0F) - 8) * scale * b[j + 11]
+                    result = result + (band(b12, 0x0F) - 8) * scale * b[j + 12]
+                    result = result + (band(b13, 0x0F) - 8) * scale * b[j + 13]
+                    result = result + (band(b14, 0x0F) - 8) * scale * b[j + 14]
+                    result = result + (band(b15, 0x0F) - 8) * scale * b[j + 15]
+
+                    result = result + (rshift(b0, 4) - 8) * scale * b[j + 16]
+                    result = result + (rshift(b1, 4) - 8) * scale * b[j + 17]
+                    result = result + (rshift(b2, 4) - 8) * scale * b[j + 18]
+                    result = result + (rshift(b3, 4) - 8) * scale * b[j + 19]
+                    result = result + (rshift(b4, 4) - 8) * scale * b[j + 20]
+                    result = result + (rshift(b5, 4) - 8) * scale * b[j + 21]
+                    result = result + (rshift(b6, 4) - 8) * scale * b[j + 22]
+                    result = result + (rshift(b7, 4) - 8) * scale * b[j + 23]
+                    result = result + (rshift(b8, 4) - 8) * scale * b[j + 24]
+                    result = result + (rshift(b9, 4) - 8) * scale * b[j + 25]
+                    result = result + (rshift(b10, 4) - 8) * scale * b[j + 26]
+                    result = result + (rshift(b11, 4) - 8) * scale * b[j + 27]
+                    result = result + (rshift(b12, 4) - 8) * scale * b[j + 28]
+                    result = result + (rshift(b13, 4) - 8) * scale * b[j + 29]
+                    result = result + (rshift(b14, 4) - 8) * scale * b[j + 30]
+                    result = result + (rshift(b15, 4) - 8) * scale * b[j + 31]
                 end
         
                 out[row] = result
             end
         end
-        
-        local function kernel_f32_f32_f32(a, b, out, dim0, dim1)
-            for row = 0, dim0 - 1 do
+
+        local function kernel_f32_f32_f32(a, b, out, dim0, dim1, offset)
+            for row = offset or 0, dim0 - 1 do
                 local result = 0
                 local offset = row * dim1
         
@@ -34,11 +96,11 @@ return function(backend)
         end
 
         return {
-            MatrixVectorMultiply = function(a, b, out, dim0, dim1)
+            MatrixVectorMultiply = function(a, b, out, dim0, dim1, offset)
                 if a.blob.type == "Q4_0" and b.blob.type == "F32" and out.blob.type == "F32" then
-                    kernel_q40_f32_f32(a.blob.Get32FloatsFromBlockIndex, b.blob.blob, out.blob.blob, dim0, dim1)
+                    kernel_q40_f32_f32(a.blob.blob, b.blob.blob, out.blob.blob, dim0, dim1, offset, a.blob.cached_f16_to_f32, a.blob.blob_f16, a.blob.half_type_size, a.blob.type_size, a.blob.half_block_size)
                 elseif a.blob.type == "F32" and b.blob.type == "F32" and out.blob.type == "F32" then
-                    kernel_f32_f32_f32(a.blob.blob, b.blob.blob, out.blob.blob, dim0, dim1)
+                    kernel_f32_f32_f32(a.blob.blob, b.blob.blob, out.blob.blob, dim0, dim1, offset)
                 else
                     error("NYI")
                 end
@@ -46,42 +108,8 @@ return function(backend)
     }
     elseif backend == "pthreads" then
         local pthreads = require("compute.cpu_pthreads")
-        local threaded_for = pthreads.threaded_for(function(dim1, out, a, b, thread_data)	
-            local i = thread_data
-
-            if a.blob.type == "Q4_0" and b.blob.type == "F32" and out.blob.type == "F32" then
-                local Get32FloatsFromBlockIndex = a.blob.Get32FloatsFromBlockIndex
-                a = a.blob.blob
-                b = b.blob.blob
-                out = out.blob.blob
-
-                local result = 0
-                local block_index = (i * dim1) / 32
-        
-                for j = 0, (dim1 / 32) - 1 do
-                    local float_block = Get32FloatsFromBlockIndex(block_index + j)
-        
-                    for k = 0, 31 do
-                        result = result + float_block[k] * b[j * 32 + k]
-                    end
-                end
-        
-                out[i] = result
-            elseif a.blob.type == "F32" and b.blob.type == "F32" and out.blob.type == "F32" then
-                a = a.blob.blob
-                b = b.blob.blob
-                out = out.blob.blob
-
-                local result = 0
-                local offset = i * dim1
-        
-                for j = 0, dim1 - 1 do
-                    result = result + a[offset + j] * b[j]
-                end
-        
-                out[i] = result
-            end
-
+        local threaded_for = pthreads.threaded_for(function(thread_start, thread_stop, dim1, out, a, b)	
+            a:MatrixVectorMultiply(b, out, thread_stop, dim1, thread_start)            
         end, {"double", "@tensor", "@tensor", "@tensor"}, pthreads.get_cpu_threads())
         
         return {
