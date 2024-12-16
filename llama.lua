@@ -60,7 +60,7 @@ local function load_and_run(model_path, prompt, token_callback)
 		local rope_freqs_real, rope_freqs_imag = build_rope_freqs(context_length, rope_theta)
 		local floor = math.floor
 
-		local function forward(state, weights)
+		local function forward(state, weights, compute_logits)
 			weights.token_embedding_table:CopyTo(state.token * dim, state.x, 0, dim)
 
 			for i, layer in ipairs(weights.layers) do
@@ -88,6 +88,10 @@ local function load_and_run(model_path, prompt, token_callback)
 
 				state.k:CopyTo(0, key_cache, state.token_pos * kv_dim, kv_dim)
 				state.v:CopyTo(0, val_cache, state.token_pos * kv_dim, kv_dim)
+
+				if not compute_logits and i == #weights.layers then
+					return
+				end
 
 				for h = 0, number_of_heads - 1 do
 					local qOffset = h * head_size
@@ -240,12 +244,13 @@ local function load_and_run(model_path, prompt, token_callback)
 
 		while state.token_pos < max_tokens do
 			local start_time = get_time()
-			forward(state, weights)
 			local next_token
-
+			
 			if state.token_pos < #prompt_tokens then
+				forward(state, weights, false)
 				next_token = prompt_tokens[state.token_pos + 1]
 			else
+				forward(state, weights, true)
 				next_token = sampler:SampleToken(state.logits) + 1
 			end
 
