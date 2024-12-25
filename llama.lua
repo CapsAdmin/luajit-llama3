@@ -141,7 +141,7 @@ local function load_and_run(model_path, prompt, token_callback)
 
 		do
 			local function load_tensor(name)
-				local entry = tensors[name]
+				local entry = assert(tensors[name], "cannot find tensor ".. name)
 
 				return Tensor.New(entry.type_info.name, entry.size, entry.blob):SetName(name .. "[" .. entry.type_info.name .. "]")
 			end

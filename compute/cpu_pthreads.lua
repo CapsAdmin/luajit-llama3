@@ -220,7 +220,7 @@ local function threaded_for2(callback, ctypes, thread_count, header_code)
 		elseif type == "@function" then
 			struct_code = struct_code .. "uint8_t * " .. name .. ";\n"
 			struct_code = struct_code .. "uint32_t " .. name .. "_len;\n"
-			unpack_code = unpack_code .. "local " .. name .. " = loadstring(ffi.string(data." .. name .. ", data." .. name .. "_len))\n"
+			unpack_code = unpack_code .. "local " .. name .. " = loadstring(ffi.string(data." .. name .. ", data." .. name .. "_len, 'unpacking "..name.."'))\n"
 			encode_code = encode_code .. "local bcode_"..name.." = string.dump("..name..")\n"
 			encode_code = encode_code .. "table.insert(data, ffi.cast('uint8_t*', bcode_" .. name .. "))\n"
 			encode_code = encode_code .. "table.insert(data, #bcode_" .. name .. ")\n"
@@ -245,7 +245,7 @@ local function threaded_for2(callback, ctypes, thread_count, header_code)
 			local lua_func
 		]],
 		unpack_code .. [[
-			lua_func = lua_func or loadstring(ffi.string(data.lua_bcode, data.lua_bcode_len))
+			lua_func = lua_func or loadstring(ffi.string(data.lua_bcode, data.lua_bcode_len), 'loadstring lua code')
 			lua_func(start, stop, ]] .. table.concat(upvalues, ", ") .. [[)
 		]],
 		thread_count
@@ -259,8 +259,8 @@ local function threaded_for2(callback, ctypes, thread_count, header_code)
 			table.insert(data, ffi.cast("uint8_t *", bcode))
 			table.insert(data, #bcode)
 		end
-	]]
-	)(bcode)
+	]],
+	"cdata build")(bcode)
 	return function(max, ...)
 		parallel_for(max, build_cdata, ...)
 	end
