@@ -117,32 +117,6 @@ return function(backend)
                 threaded_for(dim0, dim1, out, a, b)
             end
         }
-
-        --[[
-            function Tensor:Dot(thisOffset, that, thatOffset, size)
-                local result = 0
-
-                for j = 0, size - 1 do
-                    result = result + self:GetFloat(thisOffset + j) * that:GetFloat(thatOffset + j)
-                end
-
-                return result
-            end
-
-        	function Tensor:MatrixVectorMultiply(that, out, dim0, dim1)
-                for i = 0, dim0 - 1 do
-                    local result = 0
-            
-                    for j = 0, dim1 - 1 do
-                        result = result + self:GetFloat(i * dim1 + j) * that:GetFloat(j)
-                    end
-            
-                    out:SetFloat(i, result)
-                end
-            end
-
-            
-            ]]
     elseif backend == "cuda" then
         local ffi = require("ffi")
         local gpu = require("compute.gpu_cuda")

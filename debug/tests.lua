@@ -111,17 +111,6 @@ do -- blob
             end
             check(sum)
         end
-
-        do
-            local sum = 0
-            for i = 0, (t.size/block_size) - 1 do
-                local floats = t.Get32FloatsFromBlockIndex(i)
-                for j = 0, 31 do
-                    sum = sum + floats[j]
-                end
-            end
-            check(sum)
-        end
     end
 
     do
@@ -142,3 +131,8 @@ do -- blob
         end
     end
 end
+
+require("debug.cpu_matrix_benchmark")
+require("debug.cpu_plain_matrix_benchmark")
+require("debug.q40_benchmark")
+--require("debug.gpu_matrix_benchmark")

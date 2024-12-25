@@ -15,16 +15,6 @@ local function equal_around(a, b)
     error(a .. " ~= " .. b, 2)
 end
 if false then
-measure("reading Q4_0 as float block", function() 
-    local sum = 0
-    for i = 0, (wo.size/32) - 1 do
-        local floats = wo.blob.Get32FloatsFromBlockIndex(i)
-        for j = 0, 31 do
-            sum = sum + floats[j]
-        end
-    end
-    equal_around(sum, 14.916412353516)
-end)
 
 
 measure("reading Q4_0 as single float", function() 

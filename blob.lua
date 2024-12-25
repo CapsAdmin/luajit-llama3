@@ -145,19 +145,7 @@ do
 					local shift_amount = rshift(modIndex, 4) * 4
 					local quant = band(rshift(blob[2 + base_offset], shift_amount), 0x0F)
 					return (quant - 8) * scale
-				end,
-				Get32FloatsFromBlockIndex = function(block_index)
-					local scale = cached_f16_to_f32[blob_f16[block_index * half_type_size]]
-					local block_offset = block_index * type_size
-
-					for modIndex = 0, 16 - 1 do
-						local byte = blob[block_offset + band(modIndex, half_block_size - 1) + 2]
-						f[modIndex] = (band(byte, 0x0F) - 8) * scale
-						f[modIndex + 16] = (band(rshift(byte, 4), 0x0F) - 8) * scale
-					end
-
-					return f
-				end,
+				end
 			},
 			Blob
 		)-- :Fill(0, size, 0)
