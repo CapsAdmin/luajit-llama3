@@ -14,6 +14,14 @@ function Blob.GetFloat(index)
 	error("NYI", 2)
 end
 
+function Blob.New(typ, size, blob)
+	if not Blob[typ] then
+		error("NYI tensor type: " .. tostring(typ), 2)
+	end
+
+	return Blob[typ](Blob, size, blob)
+end
+
 function Blob:CopyTo(thisOffset, that, thatOffset, size)
 	if self.type == "F32" and that.type == "F32" then
 		ffi.C.memcpy(that.blob + thatOffset, self.blob + thisOffset, size * self.byte_stride)

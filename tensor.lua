@@ -10,19 +10,11 @@ function Tensor.GetAll()
 	return Tensor.tensors_created
 end
 
-function Tensor:F32(size, blob)
-	return self:new(Blob:F32(size, blob))
+function Tensor.New(typ, size, blob)
+	return Tensor.FromBlob(Blob.New(typ, size, blob))
 end
 
-function Tensor:F64(size, blob)
-	return self:new(Blob:F64(size, blob))
-end
-
-function Tensor:Q4_0(size, blob)
-	return self:new(Blob:Q4_0(size, blob))
-end
-
-function Tensor:new(blob)
+function Tensor.FromBlob(blob)
 	local t = setmetatable({}, Tensor)
 	t.blob = blob
 	t.size = blob.size
@@ -198,7 +190,7 @@ do
 	end
 
 	function Tensor:ThreadDeserialize(ptr)
-		return Tensor:new(Blob:ThreadDeserialize(ptr))
+		return Tensor.FromBlob(Blob:ThreadDeserialize(ptr))
 	end
 end
 

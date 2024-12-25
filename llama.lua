@@ -143,11 +143,7 @@ local function load_and_run(model_path, prompt, token_callback)
 			local function load_tensor(name)
 				local entry = tensors[name]
 
-				if Tensor[entry.type_info.name] then
-					return Tensor[entry.type_info.name](Tensor, entry.size, entry.blob):SetName(name .. "[" .. entry.type_info.name .. "]")
-				end
-
-				error("NYI tensor type: " .. entry.type_info.name)
+				return Tensor.New(entry.type_info.name, entry.size, entry.blob):SetName(name .. "[" .. entry.type_info.name .. "]")
 			end
 
 			weights.token_embedding_table = load_tensor("token_embd.weight")
@@ -173,23 +169,23 @@ local function load_and_run(model_path, prompt, token_callback)
 		local state = {
 			token = tokenizer:EncodeString("<|begin_of_text|>")[1] - 1,
 			token_pos = 0,
-			x = Tensor:F32(dim),
-			xb = Tensor:F32(dim),
-			xb2 = Tensor:F32(dim),
-			hb = Tensor:F32(hidden_dim),
-			hb2 = Tensor:F32(hidden_dim),
-			q = Tensor:F32(dim),
-			k = Tensor:F32(dim),
-			v = Tensor:F32(dim),
-			att = Tensor:F32(number_of_heads * context_length),
-			logits = Tensor:F32(vocabulary_size),
+			x = Tensor.New("F32", dim),
+			xb = Tensor.New("F32", dim),
+			xb2 = Tensor.New("F32", dim),
+			hb = Tensor.New("F32", hidden_dim),
+			hb2 = Tensor.New("F32", hidden_dim),
+			q = Tensor.New("F32", dim),
+			k = Tensor.New("F32", dim),
+			v = Tensor.New("F32", dim),
+			att = Tensor.New("F32", number_of_heads * context_length),
+			logits = Tensor.New("F32", vocabulary_size),
 			key_cache = {},
 			val_cache = {},
 		}
 
 		for i = 1, number_of_layers do
-			state.key_cache[i] = Tensor:F32(context_length * kv_dim)
-			state.val_cache[i] = Tensor:F32(context_length * kv_dim)
+			state.key_cache[i] = Tensor.New("F32", context_length * kv_dim)
+			state.val_cache[i] = Tensor.New("F32", context_length * kv_dim)
 		end
 
 		if backend == "cuda" then

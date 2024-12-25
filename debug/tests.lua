@@ -1,6 +1,6 @@
 do -- some tensor tests
     local Tensor = require("tensor")
-    local t = Tensor:F32(10)
+    local t = Tensor.New("F32", 10)
 
     for i = 0, 10 - 1 do
         t:SetFloat(i, i)
@@ -12,7 +12,7 @@ do -- some tensor tests
 
     assert(t:Sum(0, t.size) == 45)
     assert(t:Max(0, t.size) == 9)
-    local t2 = Tensor:F32(10)
+    local t2 = Tensor.New("F32", 10)
     t:CopyTo(0, t2, 0, t.size)
 
     for i = 0, 10 - 1 do
@@ -31,8 +31,8 @@ do -- some tensor tests
 
     do
         local size = 10
-        local t1 = Tensor:F32(size)
-        local t2 = Tensor:F32(size)
+        local t1 = Tensor.New("F32", size)
+        local t2 = Tensor.New("F32", size)
 
         for i = 0, size - 1 do
             t1:SetFloat(i, i)
@@ -51,9 +51,9 @@ do -- some tensor tests
 
     do -- test for MatrixVectorMultiply
         local size = 3
-        local t1 = Tensor:F32(size * size)
-        local t2 = Tensor:F32(size * size)
-        local out = Tensor:F32(size)
+        local t1 = Tensor.New("F32", size * size)
+        local t2 = Tensor.New("F32", size * size)
+        local out = Tensor.New("F32", size)
         t1:SetFloat(0, 1)
         t1:SetFloat(1, 2)
         t1:SetFloat(2, 3)

@@ -6,7 +6,7 @@ Tensor:UseComputeKernel("pthreads")
 local gguf = require("gguf")
 local metadata, tensors = gguf.load("/home/caps/projects/llama3.java/Meta-Llama-3-8B-Instruct-Q4_0.gguf")
 local entry = tensors["blk.0.attn_output.weight"]
-local wo = Tensor[entry.type_info.name](Tensor, entry.size, entry.blob)
+local wo = Tensor.New(entry.type_info.name, entry.size, entry.blob)
 
 local function equal_around(a, b)
     local threshold = 0.00001
@@ -36,8 +36,8 @@ measure("reading Q4_0 as single float", function()
 end)
 end
 local size = 4096*8
-local out = Tensor:F32(size)
-local b = Tensor:F32(size)
+local out = Tensor.New("F32", size)
+local b = Tensor.New("F32", size)
 b.blob:Fill(0, 4096, 1337)
 local dim0 = size
 local dim1 = size
