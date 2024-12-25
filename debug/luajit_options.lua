@@ -32,7 +32,7 @@ local default_options = {
 	-- size of each machine code area (in KBytes).
 	-- See: https://devblogs.microsoft.com/oldnewthing/20031008-00/?p=42223
 	-- Could go as low as 4K, but the mmap() overhead would be rather high.
-	sizemcode = jit.os == "Windows" or GC64 and 64 or 32,
+	sizemcode = (jit.os == "Windows" or GC64) and 64 or 32,
 	maxmcode = 512, -- max total size of all machine code areas (in KBytes).
 --
 }
