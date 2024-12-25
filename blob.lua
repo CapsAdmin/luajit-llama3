@@ -181,7 +181,7 @@ do
 
 		if not type_map[data.type] then error("unknown type " .. data.type) end
 
-		return Blob[type_map[data.type]](Blob, data.size, data.blob)
+		return Blob.New(type_map[data.type], data.size, data.blob)
 	end
 end
 
