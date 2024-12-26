@@ -1,7 +1,7 @@
 require("debug.luajit_options").SetOptimized()
 local measure = require("debug.measure_advanced")
 local profiler = require("debug.profiler")
-local Tensor = require("tensor"):UseComputeKernel("pthreads")
+local Tensor = require("tensor"):UseComputeKernel("cpu_threads")
 local gguf = require("gguf")
 local metadata, tensors = gguf.load("/home/caps/projects/llama3.java/Meta-Llama-3-8B-Instruct-Q4_0.gguf")
 local entry = tensors["blk.0.attn_output.weight"]

@@ -187,10 +187,11 @@ local function load_and_run(model_path, prompt, token_callback)
 			state.val_cache[i] = Tensor.New("F32", context_length * kv_dim)
 		end
 
-		if backend == "cuda" then
+		if backend == "gpu" then
 			-- upload and preallocate tensor memory for better performance and vram usage
 			local total_size = 0
 			local gpu = require("compute.gpu_cuda")
+
 			measure("uploading tensors to gpu")
 			local size_map = {}
 
@@ -266,7 +267,7 @@ local function load_and_run(model_path, prompt, token_callback)
 
 		print("\n\n\n")
 
-		if backend == "cuda" then require("compute.gpu_cuda").dump_gpu_stats() end
+		if backend == "gpu" then require("compute.gpu_cuda").dump_gpu_stats() end
 
 		profiler.Stop()
 		local token_count = (state.token_pos + 1)
@@ -280,7 +281,7 @@ local function load_and_run(model_path, prompt, token_callback)
 			)
 		)
 
-		if backend == "cuda" and false then -- LOL
+		if backend == "gpu" and false then -- LOL
 			local gpu = require("compute.gpu_cuda")
 			local done = {}
 

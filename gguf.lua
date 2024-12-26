@@ -242,6 +242,7 @@ local function load_gguf(path)
 end
 
 local f16_to_f32
+local f16_to_f32_cache
 do
 	local ldexp = math.ldexp
 	local cached_f16_to_f32 = ffi.new("float[65536]")
@@ -254,6 +255,7 @@ do
 	end
 
 	f16_to_f32 = function(bits) return cached_f16_to_f32[bits] end
+	f16_to_f32_cache = cached_f16_to_f32
 end
 
-return {load = load_gguf, GGMLType = GGMLType, GGMLTypeMap = GGMLTypeMap, f16_to_f32 = f16_to_f32}
+return {load = load_gguf, GGMLType = GGMLType, GGMLTypeMap = GGMLTypeMap, f16_to_f32 = f16_to_f32, f16_to_f32_cache = f16_to_f32_cache}
