@@ -35,7 +35,7 @@ return function(backend)
 
 			local half_type_size = a.half_type_size
 			local half_block_size = a.half_block_size - 1
-
+			
 			local a = a.blob
 			local b = b.blob
 			local out = out.blob
@@ -103,14 +103,72 @@ return function(backend)
 			end
 		end
 		
+		local function kernel_vecmul_q6k_f32_f32(a, b, out, dim0, dim1, offset)
+			local blob_f16 = a.blob_f16
+			local type_size = a.type_size
+			local block_size = a.block_size
+			local a = a.blob
+			local b = b.blob
+			local out = out.blob
+		
+			for row = offset or 0, dim0 - 1 do
+				local result = 0
+				local block_index = (row * dim1) / block_size
+		
+				for j = 0, (dim1 / block_size) - 1 do
+					local d = f16_to_f32(blob_f16[(block_index + j) * 2])
+					local block_offset = ((block_index + j) * type_size) + 2
+					
+					-- Match C code layout: process 128 values at a time
+					for n = 0, 128-1, 128 do
+						for l = 0, 31 do
+							-- Get indices for ql, qh sections
+							local is = rshift(l, 4)  -- l/16
+							
+							-- First value: low 4 bits of ql[l] | 2 bits from qh[l] shifted
+							local q1 = band(a[block_offset + l], 0xF)
+							q1 = q1 + lshift(band(rshift(a[block_offset + 64 + l], 0), 3), 4)
+							q1 = q1 - 32
+							
+							-- Second value: low 4 bits of ql[l+32] | 2 bits from qh[l] shifted
+							local q2 = band(a[block_offset + l + 32], 0xF)
+							q2 = q2 + lshift(band(rshift(a[block_offset + 64 + l], 2), 3), 4)
+							q2 = q2 - 32
+							
+							-- Third value: high 4 bits of ql[l] | 2 bits from qh[l] shifted
+							local q3 = rshift(a[block_offset + l], 4)
+							q3 = q3 + lshift(band(rshift(a[block_offset + 64 + l], 4), 3), 4)
+							q3 = q3 - 32
+							
+							-- Fourth value: high 4 bits of ql[l+32] | 2 bits from qh[l] shifted
+							local q4 = rshift(a[block_offset + l + 32], 4)
+							q4 = q4 + lshift(band(rshift(a[block_offset + 64 + l], 6), 3), 4)
+							q4 = q4 - 32
+		
+		
+							-- Accumulate results with correct indexing
+							local b_idx = j * block_size
+							result = result + d * q1 * b[b_idx + l]
+							result = result + d * q2 * b[b_idx + l + 32]
+							result = result + d * q3 * b[b_idx + l + 64]
+							result = result + d * q4 * b[b_idx + l + 96]
+						end
+					end
+				end
+				out[row] = result
+			end
+		end
+		
 		return {
 			MatrixVectorMultiply = function(a, b, out, dim0, dim1, offset)
-				if a.blob.type == "Q4_0" and b.blob.type == "F32" and out.blob.type == "F32" then
-					kernel_vecmul_q40_f32_f32(a.blob, b.blob, out.blob, dim0, dim1, offset)
-				elseif a.blob.type == "F32" and b.blob.type == "F32" and out.blob.type == "F32" then
-					kernel_vecmul_f32_f32_f32(a.blob, b.blob, out.blob, dim0, dim1, offset)
+				if a.type == "Q4_0" and b.type == "F32" and out.type == "F32" then
+					kernel_vecmul_q40_f32_f32(a, b, out, dim0, dim1, offset)
+				elseif a.type == "F32" and b.type == "F32" and out.type == "F32" then
+					kernel_vecmul_f32_f32_f32(a, b, out, dim0, dim1, offset)
+				elseif a.type == "Q6_K" and b.type == "F32" and out.type == "F32" then
+					kernel_vecmul_q6k_f32_f32(a, b, out, dim0, dim1, offset)
 				else
-					error("NYI " .. a.blob.type .. "*" .. out.blob.type)
+					error("NYI " .. a.type .. "*" .. out.type)
 				end
 			end,
 		}

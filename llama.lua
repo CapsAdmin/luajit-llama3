@@ -227,7 +227,7 @@ local function load_and_run(model_path, prompt, token_callback)
 			local total_size = 0
 
 			for _, tensor in ipairs(Tensor.GetAll()) do
-				total_size = total_size + tensor.blob.byte_size
+				total_size = total_size + tensor.byte_size
 			end
 
 			print(string.format("%.2fgb tensors allocated on CPU", total_size / 1024 / 1024 / 1024))

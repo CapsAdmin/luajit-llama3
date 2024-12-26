@@ -80,7 +80,7 @@ do -- some tensor tests
 end
 
 do -- blob
-    local Blob = require("blob")
+    local Tensor = require("tensor")
     local ffi = require("ffi")
 
 
@@ -88,7 +88,7 @@ do -- blob
         local block_size = 32
 
         local function mock_q40_blob(size)
-            local b = Blob:Q4_0(size)
+            local b = Tensor.New("Q4_0", size)
             for i = 0, b.size - 1 do
                 b.blob[i] = i % 255
             end
@@ -107,7 +107,7 @@ do -- blob
         do
             local sum = 0
             for i = 0, t.size-1 do 
-                sum = sum + t.GetFloat(i)
+                sum = sum + t:GetFloat(i)
             end
             check(sum)
         end
@@ -115,19 +115,19 @@ do -- blob
 
     do
         local ffi = require("ffi")
-        local b = Blob:F32(10)
-        b:Fill(0, b.size, 1337)
+        local b = Tensor.New("F32", 10)
+        b:FillInPlace(0, b.size, 1337)
         for i = 0, b.size - 1 do
-            assert(b.GetFloat(i) == 1337)
+            assert(b:GetFloat(i) == 1337)
         end
     end
 
     do
         local ffi = require("ffi")
-        local b = Blob:F32(10)
-        b:Fill(0, b.size, 0)
+        local b = Tensor.New("F32", 10)
+        b:FillInPlace(0, b.size, 0)
         for i = 0, b.size - 1 do
-            assert(b.GetFloat(i) == 0)
+            assert(b:GetFloat(i) == 0)
         end
     end
 end

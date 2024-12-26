@@ -20,7 +20,7 @@ if false then
 measure("reading Q4_0 as single float", function() 
     local sum = 0
     for i = 0, wo.size - 1 do
-        sum = sum + wo.blob.GetFloat(i)
+        sum = sum + wo:GetFloat(i)
     end
     equal_around(sum, 14.916412353516)
 end)
@@ -28,7 +28,7 @@ end
 local size = 4096*8
 local out = Tensor.New("F32", size)
 local b = Tensor.New("F32", size)
-b.blob:Fill(0, 4096, 1337)
+b:FillInPlace(0, 4096, 1337)
 local dim0 = size
 local dim1 = size
 local sum = 0

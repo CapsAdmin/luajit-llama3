@@ -93,9 +93,9 @@ end
 
 -- zero fill, otherwise GetFloat might return nil or nan
 for i,v in ipairs(variants) do
-	v.out.blob:Fill(0, v.out.blob.size, 0)
-	v.a.blob:Fill(0, v.out.blob.size, 0)
-	v.b.blob:Fill(0, v.out.blob.size, 0)
+	v.out:FillInPlace(0, v.out.blob.size, 0)
+	v.a:FillInPlace(0, v.out.blob.size, 0)
+	v.b:FillInPlace(0, v.out.blob.size, 0)
 end
 
 local total = 0
