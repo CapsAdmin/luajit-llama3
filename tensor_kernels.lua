@@ -312,9 +312,9 @@ return function(backend)
 
 		return {
 			MatrixVectorMultiply = function(a, b, out, dim0, dim1)
-				if a.blob.type == "Q4_0" and b.blob.type == "F32" and out.blob.type == "F32" then
+				if a.type == "Q4_0" and b.type == "F32" and out.type == "F32" then
 					run_kernel(kernel_vecmul_q40_f32_f32, a.blob, b.blob, out.blob, dim0, dim1)
-				elseif a.blob.type == "F32" and b.blob.type == "F32" and out.blob.type == "F32" then
+				elseif a.type == "F32" and b.type == "F32" and out.type == "F32" then
 					run_kernel(kernel_vecmul_f32_f32_f32, a.blob, b.blob, out.blob, dim0, dim1)
 				else
 					error("NYI")

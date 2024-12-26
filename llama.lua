@@ -198,13 +198,13 @@ local function load_and_run(model_path, prompt, token_callback)
 			for _, tensor in ipairs(Tensor.GetAll()) do
 				if tensor.name and tensor.name:find(".weight") then
 					-- weight tensors are static
-					tensor.blob.gpu_ptr = gpu.allocate_on_device(tensor.blob.byte_size, tensor.blob.blob)
-					total_size = total_size + tensor.blob.byte_size
+					tensor.gpu_ptr = gpu.allocate_on_device(tensor.byte_size, tensor.blob)
+					total_size = total_size + tensor.byte_size
 				else
 					-- state tensors are dynamic and are uploaded on each Tensor.MatrixVectorMultiply call
 					-- so we can allocate and share memory for each byte size
-					size_map[tensor.blob.byte_size] = size_map[tensor.blob.byte_size] or {}
-					table.insert(size_map[tensor.blob.byte_size], tensor)
+					size_map[tensor.byte_size] = size_map[tensor.byte_size] or {}
+					table.insert(size_map[tensor.byte_size], tensor)
 				end
 			end
 
@@ -212,7 +212,7 @@ local function load_and_run(model_path, prompt, token_callback)
 				local gpu_ptr = gpu.allocate_on_device(byte_size)
 
 				for _, tensor in ipairs(tensors) do
-					tensor.blob.gpu_ptr = gpu_ptr
+					tensor.gpu_ptr = gpu_ptr
 				end
 
 				total_size = total_size + byte_size
@@ -286,9 +286,9 @@ local function load_and_run(model_path, prompt, token_callback)
 			local done = {}
 
 			for _, tensor in ipairs(Tensor.GetAll()) do
-				if not done[tensor.blob.gpu_ptr] then
-					gpu.free_on_device(tensor.blob.gpu_ptr)
-					done[tensor.blob.gpu_ptr] = true
+				if not done[tensor.gpu_ptr] then
+					gpu.free_on_device(tensor.gpu_ptr)
+					done[tensor.gpu_ptr] = true
 				end
 			end
 		end

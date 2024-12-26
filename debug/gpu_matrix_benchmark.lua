@@ -64,13 +64,13 @@ do
 			if getmetatable(tensor) == Tensor then
 				if tensor.name and tensor.name:find(".weight") then
 					-- weight tensors are static
-					tensor.blob.gpu_ptr = gpu.allocate_on_device(tensor.blob.byte_size, tensor.blob.blob)
-					total_size = total_size + tensor.blob.byte_size
+					tensor.gpu_ptr = gpu.allocate_on_device(tensor.byte_size, tensor.blob)
+					total_size = total_size + tensor.byte_size
 				else
 					-- state tensors are dynamic and are uploaded on each Tensor.MatrixVectorMultiply call
 					-- so we can allocate and share memory for each byte size
-					size_map[tensor.blob.byte_size] = size_map[tensor.blob.byte_size] or {}
-					table.insert(size_map[tensor.blob.byte_size], tensor)
+					size_map[tensor.byte_size] = size_map[tensor.byte_size] or {}
+					table.insert(size_map[tensor.byte_size], tensor)
 				end
 			end
 		end
@@ -80,7 +80,7 @@ do
 		local gpu_ptr = gpu.allocate_on_device(byte_size)
 
 		for _, tensor in ipairs(tensors) do
-			tensor.blob.gpu_ptr = gpu_ptr
+			tensor.gpu_ptr = gpu_ptr
 		end
 
 		total_size = total_size + byte_size
@@ -93,9 +93,9 @@ end
 
 -- zero fill, otherwise GetFloat might return nil or nan
 for i,v in ipairs(variants) do
-	v.out:FillInPlace(0, v.out.blob.size, 0)
-	v.a:FillInPlace(0, v.out.blob.size, 0)
-	v.b:FillInPlace(0, v.out.blob.size, 0)
+	v.out:FillInPlace(0, v.out.size, 0)
+	v.a:FillInPlace(0, v.out.size, 0)
+	v.b:FillInPlace(0, v.out.size, 0)
 end
 
 local total = 0
