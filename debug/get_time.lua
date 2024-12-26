@@ -31,7 +31,7 @@ elseif ffi.os == "Windows" then
 	local start_time = ffi.new("int64_t[1]")
 	ffi.C.QueryPerformanceCounter(start_time)
 
-	function system.GetTime()
+	return function()
 		local time = ffi.new("int64_t[1]")
 		ffi.C.QueryPerformanceCounter(time)
 		time[0] = time[0] - start_time[0]
