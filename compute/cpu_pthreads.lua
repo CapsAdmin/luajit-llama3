@@ -239,8 +239,7 @@ local function threaded_for2(callback, ctypes, thread_count, header_code)
 		[[
 			require("debug.luajit_options").SetOptimized()
 			local ffi = require("ffi")
-			local Tensor = require("tensor")
-			Tensor:UseComputeKernel("lua")
+			local Tensor = require("tensor"):UseComputeKernel("lua")
 
 			local lua_func
 		]],

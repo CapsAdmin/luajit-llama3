@@ -1,5 +1,4 @@
-local Tensor = require("tensor")
-Tensor:UseComputeKernel("cuda")
+local Tensor = require("tensor"):UseComputeKernel("cuda")
 local measure = require("debug.measure")
 
 function Tensor.MatrixVectorMultiplyCPU(a, b, out, dim0, dim1)

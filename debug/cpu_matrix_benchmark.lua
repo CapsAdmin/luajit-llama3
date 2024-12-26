@@ -1,5 +1,4 @@
-local Tensor = require("tensor")
-Tensor:UseComputeKernel("pthreads")
+local Tensor = require("tensor"):UseComputeKernel("pthreads")
 local measure = require("debug.measure")
 
 local variants = {
