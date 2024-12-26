@@ -5,56 +5,57 @@ ffi.cdef[[
 	size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream);
 	void *malloc( size_t size );
 ]]
-local GGMLType, GGMLTypeMap = (
-	function()
-		local BYTE = 1
-		local FLOAT = 4
-		local SHORT = 2
-		local INTEGER = 4
-		local FLOAT16 = 2 -- Assuming 16-bit half-precision float (2 bytes)
-		local GGMLType = {
-			{name = "F32", type_size = FLOAT, block_size = 1},
-			{name = "F16", type_size = FLOAT16, block_size = 1},
-			{name = "Q4_0", type_size = FLOAT16 + 16 * BYTE, block_size = 32},
-			{name = "Q4_1", type_size = 2 * FLOAT16 + 16 * BYTE, block_size = 32},
-			{name = "UNSUPPORTED_Q4_2", type_size = INTEGER, block_size = 1},
-			{name = "UNSUPPORTED_Q4_3", type_size = INTEGER, block_size = 1},
-			{name = "Q5_0", type_size = INTEGER, block_size = 1},
-			{name = "Q5_1", type_size = INTEGER, block_size = 1},
-			{name = "Q8_0", type_size = FLOAT16 + 32 * BYTE, block_size = 32},
-			{name = "Q8_1", type_size = 32 * BYTE + 2 * FLOAT, block_size = 32},
-			{name = "Q2_K", type_size = INTEGER, block_size = 1},
-			{name = "Q3_K", type_size = INTEGER, block_size = 1},
-			{
-				name = "Q4_K",
-				type_size = 2 * FLOAT16 + (256 / 16 / 8 * 6) + 256 / 2,
-				block_size = 256,
-			},
-			{
-				name = "Q5_K",
-				type_size = 2 * FLOAT16 + (256 / 16 / 8 * 6) + 256 / 8 + 256 / 2,
-				block_size = 256,
-			},
-			{
-				name = "Q6_K",
-				type_size = 256 / 2 + 256 / 4 + 256 / 16 + FLOAT16,
-				block_size = 256,
-			},
-			{name = "Q8_K", type_size = INTEGER, block_size = 1},
-			{name = "I8", type_size = BYTE, block_size = 1},
-			{name = "I16", type_size = SHORT, block_size = 1},
-			{name = "I32", type_size = INTEGER, block_size = 1},
-		}
-		local map = {}
+local GGMLType
+local GGMLTypeMap = {}
 
-		for i, v in ipairs(GGMLType) do
-			v.enum = i - 1
-			map[v.name] = v
-		end
+do
+	local BYTE = 1
+	local FLOAT = 4
+	local SHORT = 2
+	local INTEGER = 4
+	local FLOAT16 = 2 -- Assuming 16-bit half-precision float (2 bytes)
+	local list = {
+		{name = "F32", type_size = FLOAT, block_size = 1},
+		{name = "F16", type_size = FLOAT16, block_size = 1},
+		{name = "Q4_0", type_size = FLOAT16 + 16 * BYTE, block_size = 32},
+		{name = "Q4_1", type_size = 2 * FLOAT16 + 16 * BYTE, block_size = 32},
+		{name = "UNSUPPORTED_Q4_2", type_size = INTEGER, block_size = 1},
+		{name = "UNSUPPORTED_Q4_3", type_size = INTEGER, block_size = 1},
+		{name = "Q5_0", type_size = INTEGER, block_size = 1},
+		{name = "Q5_1", type_size = INTEGER, block_size = 1},
+		{name = "Q8_0", type_size = FLOAT16 + 32 * BYTE, block_size = 32},
+		{name = "Q8_1", type_size = 32 * BYTE + 2 * FLOAT, block_size = 32},
+		{name = "Q2_K", type_size = INTEGER, block_size = 1},
+		{name = "Q3_K", type_size = INTEGER, block_size = 1},
+		{
+			name = "Q4_K",
+			type_size = 2 * FLOAT16 + (256 / 16 / 8 * 6) + 256 / 2,
+			block_size = 256,
+		},
+		{
+			name = "Q5_K",
+			type_size = 2 * FLOAT16 + (256 / 16 / 8 * 6) + 256 / 8 + 256 / 2,
+			block_size = 256,
+		},
+		{
+			name = "Q6_K",
+			type_size = 256 / 2 + 256 / 4 + 256 / 16 + FLOAT16,
+			block_size = 256,
+		},
+		{name = "Q8_K", type_size = INTEGER, block_size = 1},
+		{name = "I8", type_size = BYTE, block_size = 1},
+		{name = "I16", type_size = SHORT, block_size = 1},
+		{name = "I32", type_size = INTEGER, block_size = 1},
+	}
 
-		return GGMLType, map
+	for i, v in ipairs(list) do
+		v.enum = i - 1
+		GGMLTypeMap[v.name] = v
 	end
-)()
+
+	GGMLType = list
+end
+
 local read_primitive = (
 	function()
 		local cache = {}
@@ -228,11 +229,6 @@ local function load_gguf(path)
 	for i, tensor in ipairs(tensors) do
 		tensor.blob = mega_buffer + tensor.offset
 		tensor.offset = nil
-
-		-- random sanity check
-		if tensor.name == "blk.0.attn_norm.weight" then
-			assert(ffi.cast("float*", tensor.blob)[585] == 0.5625)
-		end
 	end
 
 	local tensor_map = {}
@@ -245,4 +241,19 @@ local function load_gguf(path)
 	return metadata, tensor_map
 end
 
-return {load = load_gguf, GGMLType = GGMLType, GGMLTypeMap = GGMLTypeMap}
+local f16_to_f32
+do
+	local ldexp = math.ldexp
+	local cached_f16_to_f32 = ffi.new("float[65536]")
+
+	for i = 0, 65536 - 1 do
+		local sign = 1 - bit.band(bit.rshift(i, 15), 0x1) * 2
+		local exponent = bit.band(bit.rshift(i, 10), 0x1F)
+		local mantissa = bit.band(i, 0x3FF)
+		cached_f16_to_f32[i] = sign * math.ldexp(mantissa + 1024, exponent - 25)
+	end
+
+	f16_to_f32 = function(bits) return cached_f16_to_f32[bits] end
+end
+
+return {load = load_gguf, GGMLType = GGMLType, GGMLTypeMap = GGMLTypeMap, f16_to_f32 = f16_to_f32}

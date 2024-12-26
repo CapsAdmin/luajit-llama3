@@ -15,9 +15,7 @@ function Blob.GetFloat(index)
 end
 
 function Blob.New(typ, size, blob)
-	if not Blob[typ] then
-		error("NYI tensor type: " .. tostring(typ), 2)
-	end
+	if not Blob[typ] then error("NYI tensor type: " .. tostring(typ), 2) end
 
 	return Blob[typ](Blob, size, blob)
 end
@@ -43,7 +41,8 @@ function Blob:Fill(thisOffset, size, identity)
 		end
 	else
 		error("NYI", 2)
-	end	
+	end
+
 	return self
 end
 
@@ -65,7 +64,7 @@ function Blob:F32(size, blob)
 			end,
 		},
 		Blob
-	)-- :Fill(0, size, 0)
+	) -- :Fill(0, size, 0)
 end
 
 function Blob:F64(size, blob)
@@ -86,35 +85,18 @@ function Blob:F64(size, blob)
 			end,
 		},
 		Blob
-	)-- :Fill(0, size, 0)
+	) -- :Fill(0, size, 0)
 end
 
 do
 	local ggf = require("gguf")
+	local f16_to_f32 = ggf.f16_to_f32
 	local block_size = ggf.GGMLTypeMap.Q4_0.block_size
 	local half_block_size = block_size / 2
 	local type_size = ggf.GGMLTypeMap.Q4_0.type_size
 	local half_type_size = type_size / 2
 	local rshift = bit.rshift
 	local band = bit.band
-	local ldexp = math.ldexp
-
-	local function f16_to_f32(buf)
-		return ldexp(buf.mantissa + 1024, buf.exponent - 25) * (1 - buf.sign * 2)
-	end
-
-	local function f16_to_f32(bits)
-		local sign = 1 - band(rshift(bits, 15), 0x1) * 2
-		local exponent = band(rshift(bits, 10), 0x1F)
-		local mantissa = band(bits, 0x3FF)
-		return sign * ldexp(mantissa + 1024, exponent - 25)
-	end
-
-	local cached_f16_to_f32 = ffi.new("float[65536]")
-
-	for i = 0, 65536 - 1 do
-		cached_f16_to_f32[i] = f16_to_f32(i)
-	end
 
 	function Blob:Q4_0(size, blob)
 		local byte_size = size * type_size
@@ -132,23 +114,23 @@ do
 				byte_size = tonumber(byte_size),
 				byte_stride = 1,
 				blob_f16 = blob_f16,
-				cached_f16_to_f32 = cached_f16_to_f32,
 				half_type_size = half_type_size,
 				type_size = type_size,
 				half_block_size = half_block_size,
+				block_size = block_size,
 				GetFloat = function(index)
 					local block_index = rshift(index, 5)
 					local block_offset = block_index * type_size
-					local scale = cached_f16_to_f32[blob_f16[block_index * half_type_size]]
+					local scale = f16_to_f32(blob_f16[block_index * half_type_size])
 					local modIndex = band(index, block_size - 1)
 					local base_offset = block_offset + band(modIndex, half_block_size - 1)
 					local shift_amount = rshift(modIndex, 4) * 4
 					local quant = band(rshift(blob[2 + base_offset], shift_amount), 0x0F)
 					return (quant - 8) * scale
-				end
+				end,
 			},
 			Blob
-		)-- :Fill(0, size, 0)
+		) -- :Fill(0, size, 0)
 	end
 end
 
