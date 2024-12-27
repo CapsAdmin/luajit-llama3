@@ -1,14 +1,14 @@
 Llama3 inference with luajit using the Q4_0 model variant. 
 
-It can use cuda, pthreads or plain luajit to do inference, though the luajit variant is painfully slow. Most of the time is being spent in Tensor.MatrixVectorMultiply
+It can use cuda, cpu threads on windows and linux or plain luajit (single thread) to do inference, though the luajit variant is painfully slow. Most of the time is being spent in Tensor.MatrixVectorMultiply
 
-The cuda version uses a kernel to do the multiplication while the pthreads version just spreads the calculation accross multiple lua states in threads. Otherwise all calculations are done in luajit.
+The cuda version uses a kernel to do the multiplication while the threaded version just spreads the calculation accross multiple lua states in threads. Otherwise all calculations are done in luajit.
 
 It would be cool to make the pure luajit version faster, but I'm not really sure how. Using simd can speed it up quite a bit, but this is not available directly in LuaJIT ([though it's on the roadmap](https://github.com/LuaJIT/LuaJIT/pull/116)) so the only option is to compile specialized C code to load with ffi.
 
 
 ```
-luajit llama.lua cuda "Meta-Llama-3-8B-Instruct-Q4_0.gguf" "write a luajit haiku"
+luajit llama.lua gpu "Meta-Llama-3-8B-Instruct-Q4_0.gguf" "write a luajit haiku"
 cuda driver version: 12.04
 using device: NVIDIA GeForce RTX 4090
 reading gguf metadata took 0.10612 seconds

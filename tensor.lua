@@ -6,7 +6,7 @@ ffi.cdef[[
 local ggf = require("gguf")
 local f16_to_f32 = ggf.f16_to_f32
 local has_gpu, gpu = pcall(require, "compute.gpu_cuda")
-local has_cpu_threads, pthreads = pcall(require, "compute.cpu_pthreads")
+local has_cpu_threads, threads = pcall(require, "compute.cpu_threads")
 
 if has_gpu and not IS_THREAD then
 	if not gpu.initialized then
@@ -64,12 +64,12 @@ do
 	do
 		function Tensor:MatrixVectorMultiplyWithOffsetCPUThreads(that, out, dim0, dim1, offset)
 			if has_cpu_threads and not threaded_for then
-				threaded_for = pthreads.threaded_for(
+				threaded_for = threads.threaded_for(
 					function(thread_start, thread_stop, dim1, out, a, b)
 						a:MatrixVectorMultiplyWithOffset(b, out, thread_stop, dim1, thread_start)
 					end,
 					{"double", "@tensor", "@tensor", "@tensor"},
-					pthreads.get_cpu_threads()
+					threads.get_cpu_threads()
 				)
 			end
 
@@ -81,13 +81,11 @@ do
 		if self.backend == "lua" then
 			self:MatrixVectorMultiplyWithOffset(that, out, dim0, dim1, offset)
 		elseif self.backend == "gpu" then
-			if not has_gpu then error("gpu not available") end
-
 			self:MatrixVectorMultiplyWithOffsetGPU(that, out, dim0, dim1, offset)
 		elseif self.backend == "cpu_threads" then
-			if not has_cpu_threads then error("cpu threads not available" .. pthreads) end
-
 			self:MatrixVectorMultiplyWithOffsetCPUThreads(that, out, dim0, dim1, offset)
+		else
+			error("invalid backend: " .. slef.backend)
 		end
 	end
 end
@@ -223,8 +221,20 @@ function Tensor:RmsNormInPlace(x, weight, size, rmsNormEps)
 end
 
 function Tensor:UseComputeKernel(backend)
-	assert(backend == "gpu" or backend == "cpu_threads" or backend == "lua")
+	assert(
+		backend == "gpu" or backend == "cpu_threads" or backend == "lua",
+		"backend must be gpu, cpu_threads or lua"
+	)
 	Tensor.backend = backend
+
+	if backend == "gpu" then
+		if not has_gpu then error("gpu not available") end
+	elseif backend == "cpu_threads" then
+		if not has_cpu_threads then
+			error("cpu threads are not available: " .. threads)
+		end
+	end
+
 	return Tensor
 end
 
