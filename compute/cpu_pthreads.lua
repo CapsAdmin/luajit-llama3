@@ -1,22 +1,129 @@
 local ffi = require("ffi")
-local pt = ffi.load("pthread")
-ffi.cdef[[
-    typedef uint64_t pthread_t;
+local run_thread = function(ptr, udata)
+	error("NYI")
+end
+local join_thread = function(id)
+	error("NYI")
+end
 
-    typedef struct {
-        uint32_t flags;
-        void * stack_base;
-        size_t stack_size;
-        size_t guard_size;
-        int32_t sched_policy;
-        int32_t sched_priority;
-    } pthread_attr_t;
+if ffi.os == "Windows" then
+	ffi.cdef[[
+        void* CreateThread(
+            void* lpThreadAttributes,
+            size_t dwStackSize,
+            uint32_t (*)(void*) lpStartAddress,
+            void* lpParameter,
+            uint32_t dwCreationFlags,
+            uint32_t* lpThreadId
+        );
+        uint32_t WaitForSingleObject(void* hHandle, uint32_t dwMilliseconds);
+        int CloseHandle(void* hObject);
+        uint32_t GetLastError(void);
+        int32_t GetExitCodeThread(void* hThread, uint32_t* lpExitCode);
+    ]]
+	local kernel32 = ffi.load("kernel32")
 
-    int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start_routine)(void *), void *arg);
-    int pthread_join(pthread_t thread, void **value_ptr );
+	local function check_win_error(success)
+		if success ~= 0 then return end
 
-	long sysconf(int name);
-]]
+		local error_code = kernel32.GetLastError()
+		local error_messages = {
+			[5] = "Access denied",
+			[6] = "Invalid handle",
+			[8] = "Not enough memory",
+			[87] = "Invalid parameter",
+			[1455] = "Page file quota exceeded",
+		}
+		local err_msg = error_messages[error_code] or "unknown error"
+		error(string.format("Thread operation failed: %s (Error code: %d)", err_msg, error_code), 2)
+	end
+
+	-- Constants
+	local INFINITE = 0xFFFFFFFF
+	local THREAD_ALL_ACCESS = 0x1F03FF
+
+	function run_thread(func_ptr, udata)
+		local thread_id = ffi.new("uint32_t[1]")
+		local thread_handle = kernel32.CreateThread(
+			nil, -- Security attributes (default)
+			0, -- Stack size (default)
+			ffi.cast("uint32_t (*)(void*)", func_ptr),
+			udata, -- Thread parameter
+			0, -- Creation flags (run immediately)
+			thread_id -- Thread identifier
+		)
+
+		if thread_handle == nil then check_win_error(0) end
+
+		-- Return both handle and ID for Windows
+		return {handle = thread_handle, id = thread_id[0]}
+	end
+
+	function join_thread(thread_data)
+		local wait_result = kernel32.WaitForSingleObject(thread_data.handle, INFINITE)
+
+		if wait_result == INFINITE then check_win_error(0) end
+
+		local exit_code = ffi.new("uint32_t[1]")
+
+		if kernel32.GetExitCodeThread(thread_data.handle, exit_code) == 0 then
+			check_win_error(0)
+		end
+
+		if kernel32.CloseHandle(thread_data.handle) == 0 then check_win_error(0) end
+
+		return exit_code[0]
+	end
+else
+	ffi.cdef[[
+		typedef uint64_t pthread_t;
+
+		typedef struct {
+			uint32_t flags;
+			void * stack_base;
+			size_t stack_size;
+			size_t guard_size;
+			int32_t sched_policy;
+			int32_t sched_priority;
+		} pthread_attr_t;
+
+		int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start_routine)(void *), void *arg);
+		int pthread_join(pthread_t thread, void **value_ptr );
+
+		long sysconf(int name);
+	]]
+	local pt = ffi.load("pthread")
+
+	-- Enhanced pthread error checking
+	local function check_pthread(int)
+		if int == 0 then return end
+
+		local error_messages = {
+			[11] = "System lacks resources or reached thread limit",
+			[22] = "Invalid thread attributes specified",
+			[1] = "Insufficient permissions to set scheduling parameters",
+			[3] = "Thread not found",
+			[35] = "Deadlock condition detected",
+			[12] = "Insufficient memory to create thread",
+		}
+		local err_msg = error_messages[int] or "unknown error"
+
+		if err_msg then
+			error(string.format("Thread operation failed: %s (Error code: %d)", err_msg, int), 2)
+		end
+	end
+
+	function run_thread(func_ptr, udata)
+		local thread_id = ffi.new("pthread_t[1]", 1)
+		check_pthread(pt.pthread_create(thread_id, nil, func_ptr, udata))
+		return thread_id[0]
+	end
+
+	function join_thread(id)
+		check_pthread(pt.pthread_join(id, nil))
+	end
+end
+
 local LUA_GLOBALSINDEX = -10002
 ffi.cdef[[
     typedef struct lua_State lua_State;
@@ -26,11 +133,12 @@ ffi.cdef[[
     void lua_close(lua_State *L);
     int luaL_loadstring(lua_State *L, const char *s);
     int lua_pcall(lua_State *L, int nargs, int nresults, int errfunc);
-
     void lua_getfield(lua_State *L, int index, const char *k);
     void lua_settop(lua_State *L, int index);
     const char *lua_tolstring(lua_State *L, int index, size_t *len);
     ptrdiff_t lua_tointeger(lua_State *L, int index);
+	int lua_gettop(lua_State *L);
+    void lua_pushstring(lua_State *L, const char *s);
 ]]
 
 local function get_cpu_threads()
@@ -40,7 +148,10 @@ local function get_cpu_threads()
 end
 
 local function create_lua_state()
-	local L = assert(ffi.C.luaL_newstate())
+	local L = ffi.C.luaL_newstate()
+
+	if L == nil then error("Failed to create new Lua state: Out of memory", 2) end
+
 	ffi.C.luaL_openlibs(L)
 	return L
 end
@@ -73,20 +184,6 @@ local function get_function_pointer(L)
 	return func_ptr
 end
 
-local EAGAIN = 11
-local EINVAL = 22
-local EPERM = 1
-
-local function check_pthread(int)
-	if int == EAGAIN then
-		error("try again", 2)
-	elseif int == EINVAL then
-		error("invalid settings", 2)
-	elseif int == EPERM then
-		error("no permission", 2)
-	end
-end
-
 local thread_func_signature = "void *(*)(void *)"
 
 local function load_thread(code)
@@ -98,16 +195,6 @@ local function load_thread(code)
    		]]
 	)
 	return ffi.cast("void *(*)(void *)", get_function_pointer(L))
-end
-
-local function run_thread(func_ptr, udata)
-	local thread_id = ffi.new("pthread_t[1]", 1)
-	check_pthread(pt.pthread_create(thread_id, nil, func_ptr, udata))
-	return thread_id[0]
-end
-
-local function join_thread(id)
-	check_pthread(pt.pthread_join(id, nil))
 end
 
 local function threaded_for(encode_code, lua_header_code, lua_code, thread_count)
@@ -220,8 +307,8 @@ local function threaded_for2(callback, ctypes, thread_count, header_code)
 		elseif type == "@function" then
 			struct_code = struct_code .. "uint8_t * " .. name .. ";\n"
 			struct_code = struct_code .. "uint32_t " .. name .. "_len;\n"
-			unpack_code = unpack_code .. "local " .. name .. " = loadstring(ffi.string(data." .. name .. ", data." .. name .. "_len, 'unpacking "..name.."'))\n"
-			encode_code = encode_code .. "local bcode_"..name.." = string.dump("..name..")\n"
+			unpack_code = unpack_code .. "local " .. name .. " = loadstring(ffi.string(data." .. name .. ", data." .. name .. "_len, 'unpacking " .. name .. "'))\n"
+			encode_code = encode_code .. "local bcode_" .. name .. " = string.dump(" .. name .. ")\n"
 			encode_code = encode_code .. "table.insert(data, ffi.cast('uint8_t*', bcode_" .. name .. "))\n"
 			encode_code = encode_code .. "table.insert(data, #bcode_" .. name .. ")\n"
 		else
@@ -260,7 +347,8 @@ local function threaded_for2(callback, ctypes, thread_count, header_code)
 			table.insert(data, #bcode)
 		end
 	]],
-	"cdata build")(bcode)
+		"cdata build"
+	)(bcode)
 	return function(max, ...)
 		parallel_for(max, build_cdata, ...)
 	end
