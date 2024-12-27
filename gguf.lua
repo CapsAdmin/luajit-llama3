@@ -102,38 +102,38 @@ local reader, read_value = (
 		local reader
 
 		local function read_value(file, value_type)
-			return reader[assert(types[value_type + 1], "invalid value type")](file)
+			return reader[assert(types[value_type + 1], "invalid value type " .. value_type)](file)
 		end
 
 		reader = {
-			function(file)
+			function(file) -- "UINT8",
 				return read_primitive(file, "uint8_t")
 			end,
-			function(file)
+			function(file) -- "INT8",
 				return read_primitive(file, "int8_t")
 			end,
-			function(file)
+			function(file) -- "UINT16",
 				return read_primitive(file, "uint16_t")
 			end,
-			function(file)
+			function(file) -- "INT16",
 				return read_primitive(file, "int16_t")
 			end,
-			function(file)
+			function(file) -- "UINT32",
 				return read_primitive(file, "uint32_t")
 			end,
-			function(file)
+			function(file) -- "INT32",
 				return read_primitive(file, "int32_t")
 			end,
-			function(file)
+			function(file) -- "FLOAT32",
 				return read_primitive(file, "float")
 			end,
-			function(file)
+			function(file) -- "BOOL",
 				return read_primitive(file, "bool")
 			end,
-			function(file)
+			function(file) -- "STRING",
 				return file:read(tonumber(reader.UINT64(file)))
 			end,
-			function(file)
+			function(file) -- "ARRAY",
 				local value_type = reader.UINT32(file)
 				local arr = {}
 
@@ -143,13 +143,13 @@ local reader, read_value = (
 
 				return arr
 			end,
-			function(file)
+			function(file) -- "UINT64",
 				return read_primitive(file, "uint64_t")
 			end,
-			function(file)
+			function(file) -- "INT64",
 				return read_primitive(file, "int64_t")
 			end,
-			function(file)
+			function(file) -- "FLOAT64",
 				return read_primitive(file, "double")
 			end,
 		}
@@ -165,7 +165,7 @@ local reader, read_value = (
 
 local function load_gguf(path)
 	measure("reading gguf metadata")
-	local file = assert(io.open(path, "r"))
+	local file = assert(io.open(path, "rb"))
 	assert(file:read(4) == "GGUF", "not a gguf file")
 
 	do
