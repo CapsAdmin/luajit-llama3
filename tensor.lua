@@ -1,5 +1,10 @@
 local ffi = require("ffi")
+ffi.cdef[[
+	void *malloc( size_t size );
+	void *memcpy(void *dest, const void *src, size_t n);
+]]
 local ggf = require("gguf")
+local f16_to_f32 = ggf.f16_to_f32
 local has_gpu, gpu = pcall(require, "compute.gpu_cuda")
 local has_cpu_threads, pthreads = pcall(require, "compute.cpu_pthreads")
 
@@ -10,10 +15,6 @@ if has_gpu and not IS_THREAD then
 	end
 end
 
-ffi.cdef[[
-	void *malloc( size_t size );
-	void *memcpy(void *dest, const void *src, size_t n);
-]]
 local math_exp = math.exp
 local Tensor = {}
 Tensor.__index = Tensor
@@ -221,41 +222,6 @@ function Tensor:RmsNormInPlace(x, weight, size, rmsNormEps)
 	end
 end
 
-do
-	local ctype = ffi.typeof([[
-		struct {
-			int size;
-			int type;
-			void *blob; 
-		}
-	]])
-	local ctype_ptr = ffi.typeof("$*", ctype)
-	local ctype_box = ffi.typeof("$[1]", ctype)
-	local type_map = {
-		F32 = 0,
-		Q4_0 = 1,
-		Q8_0 = 2,
-		Q6_K = 3,
-	}
-
-	-- double lookup
-	for i, str in pairs(type_map) do
-		type_map[str] = i
-	end
-
-	function Tensor:ThreadSerialize()
-		return ctype(self.size, type_map[self.type], ffi.cast("void *", self.blob))
-	end
-
-	function Tensor:ThreadDeserialize(ptr)
-		local data = ffi.cast(ctype_ptr, ptr)
-
-		if not type_map[data.type] then error("unknown type " .. data.type) end
-
-		return Tensor.New(type_map[data.type], data.size, data.blob)
-	end
-end
-
 function Tensor:UseComputeKernel(backend)
 	assert(backend == "gpu" or backend == "cpu_threads" or backend == "lua")
 	Tensor.backend = backend
@@ -265,25 +231,26 @@ end
 local tensor_types = {}
 
 do
-	local f16_to_f32 = ggf.f16_to_f32
-	tensor_types.F64 = function(size, blob)
-		local stride = ffi.sizeof("double")
-		blob = ffi.cast("double*", blob or ffi.cast("double*", ffi.C.malloc(size * stride)))
-		return {
-			blob = blob,
-			size = tonumber(size),
-			byte_size = tonumber(size * stride),
-			byte_stride = stride,
-			SetFloat = function(_, index, val)
-				blob[index] = val
-			end,
-			GetFloat = function(_, index)
-				return blob[index]
-			end,
-		}
+	do -- F64
+		tensor_types.F64 = function(size, blob)
+			local stride = ffi.sizeof("double")
+			blob = ffi.cast("double*", blob or ffi.cast("double*", ffi.C.malloc(size * stride)))
+			return {
+				blob = blob,
+				size = tonumber(size),
+				byte_size = tonumber(size * stride),
+				byte_stride = stride,
+				SetFloat = function(_, index, val)
+					blob[index] = val
+				end,
+				GetFloat = function(_, index)
+					return blob[index]
+				end,
+			}
+		end
 	end
 
-	do
+	do -- F32
 		local kernel_vecmul_f32_f32_f32 = has_gpu and
 			gpu.compile_kernel(
 				[[
@@ -302,8 +269,6 @@ do
         ]],
 				"kernel_f32_f32_f32"
 			)
-		local F32_SIZE = 4
-		local SHORT_SIZE = 2
 
 		local function run_kernel(kernel, a, b, out, dim0, dim1)
 			-- this assumes a, b and out have been uploaded and allocated on the gpu
@@ -366,21 +331,19 @@ do
 		end
 	end
 
-	do
+	do -- Q4_0
 		local block_size = ggf.GGMLTypeMap.Q4_0.block_size
-		local half_block_size = block_size / 2
+		local half_block_size = (block_size / 2) - 1
 		local type_size = ggf.GGMLTypeMap.Q4_0.type_size
 		local half_type_size = type_size / 2
-		local rshift = bit.rshift
-		local band = bit.band
 		local kernel_vecmul_q40_f32_f32 = has_gpu and
 			gpu.compile_kernel(
 				[=[
-            #define BLOCK_SIZE 32
-            #define HALF_BLOCK_SIZE 16
-            #define TYPE_SIZE 18
-            #define HALF_TYPE_SIZE 9
-            __device__ float f16_to_f32_cache[65536];
+            #define BLOCK_SIZE ]=] .. block_size .. [=[ 
+            #define HALF_BLOCK_SIZE ]=] .. half_block_size .. [=[ 
+            #define TYPE_SIZE ]=] .. type_size .. [=[ 
+            #define HALF_TYPE_SIZE ]=] .. half_type_size .. [=[ 
+            __device__ float f16_to_f32_cache[]=] .. ffi.sizeof(ggf.f16_to_f32_cache) .. [=[ ];
     
             __device__ void decode_float_block(const unsigned char *blob, int block_index, float *f) {
                 const unsigned short* blob_f16 = (const unsigned short*)blob;
@@ -391,12 +354,11 @@ do
                 const unsigned char *block = blob + block_offset;
     
                 #pragma unroll
-                for (int i = 0; i < HALF_BLOCK_SIZE; i++) {
-                    unsigned char b = block[(i & (HALF_BLOCK_SIZE - 1)) + 2];
+                for (int i = 0; i <= HALF_BLOCK_SIZE; i++) {
+                    unsigned char b = block[(i & (HALF_BLOCK_SIZE)) + 2];
     
                     f[i] = ((b & 0x0F) - 8) * scale;
                     f[i+16] = (((b / 16) & 0x0F) - 8) * scale;
-    
                 }
             }
     
@@ -425,22 +387,8 @@ do
 					f16_to_f32_cache = {data = ggf.f16_to_f32_cache, size = ffi.sizeof(ggf.f16_to_f32_cache)},
 				}
 			)
-		local F32_SIZE = 4
-		local SHORT_SIZE = 2
-
-		local function run_kernel(kernel, a, b, out, dim0, dim1)
-			-- this assumes a, b and out have been uploaded and allocated on the gpu
-			-- it also assumes a never changes, which in the context of this proejct are the model weights
-			gpu.copy_to_device(b.gpu_ptr, b.blob, b.byte_size)
-			local thread_count = 1024
-			local block_count = math.ceil((dim0 + thread_count - 1) / thread_count)
-			local box_dim0 = ffi.new("int[1]", dim0)
-			local box_dim1 = ffi.new("int[1]", dim1)
-			local args = ffi.new("void*[5]", a.gpu_ptr, b.gpu_ptr, out.gpu_ptr, box_dim0, box_dim1)
-			gpu.run_kernel(kernel, thread_count, 1, 1, block_count, 1, 1, args)
-			gpu.copy_from_device(out.gpu_ptr, out.blob, dim0 * out.byte_stride)
-		end
-
+		local rshift = bit.rshift
+		local band = bit.band
 		tensor_types.Q4_0 = function(size, blob)
 			local byte_size = size * type_size
 			blob = ffi.cast("uint8_t*", blob or ffi.cast("uint8_t*", ffi.C.malloc(byte_size)))
@@ -452,33 +400,32 @@ do
 				size = tonumber(size),
 				byte_size = tonumber(byte_size),
 				byte_stride = 1,
-				blob_f16 = blob_f16,
-				half_type_size = half_type_size,
-				type_size = type_size,
-				half_block_size = half_block_size,
-				block_size = block_size,
 				GetFloat = function(_, index)
 					local block_index = rshift(index, 5)
 					local block_offset = block_index * type_size
 					local scale = f16_to_f32(blob_f16[block_index * half_type_size])
 					local modIndex = band(index, block_size - 1)
-					local base_offset = block_offset + band(modIndex, half_block_size - 1)
+					local base_offset = block_offset + band(modIndex, half_block_size)
 					local shift_amount = rshift(modIndex, 4) * 4
 					local quant = band(rshift(blob[2 + base_offset], shift_amount), 0x0F)
 					return (quant - 8) * scale
 				end,
 				MatrixVectorMultiplyWithOffsetGPU = function(a, b, out, dim0, dim1, offset)
-					run_kernel(kernel_vecmul_q40_f32_f32, a, b, out, dim0, dim1)
+					-- this assumes a, b and out have been uploaded and allocated on the gpu
+					-- it also assumes a never changes, which in the context of this proejct are the model weights
+					gpu.copy_to_device(b.gpu_ptr, b.blob, b.byte_size)
+					local thread_count = 1024
+					local block_count = math.ceil((dim0 + thread_count - 1) / thread_count)
+					local box_dim0 = ffi.new("int[1]", dim0)
+					local box_dim1 = ffi.new("int[1]", dim1)
+					local args = ffi.new("void*[5]", a.gpu_ptr, b.gpu_ptr, out.gpu_ptr, box_dim0, box_dim1)
+					gpu.run_kernel(kernel_vecmul_q40_f32_f32, thread_count, 1, 1, block_count, 1, 1, args)
+					gpu.copy_from_device(out.gpu_ptr, out.blob, dim0 * out.byte_stride)
 				end,
 				MatrixVectorMultiplyWithOffset = function(a, b, out, dim0, dim1, offset)
+					local a = blob
 					assert(b.type == "F32")
 					assert(out.type == "F32")
-					local blob_f16 = a.blob_f16
-					local type_size = a.type_size
-					local block_size = a.block_size
-					local half_type_size = a.half_type_size
-					local half_block_size = a.half_block_size - 1
-					local a = a.blob
 					local b = b.blob
 					local out = out.blob
 
@@ -546,135 +493,6 @@ do
 			}
 		end
 	end
-
-	do
-		local block_size = ggf.GGMLTypeMap.Q6_K.block_size
-		local half_block_size = block_size / 2
-		local type_size = ggf.GGMLTypeMap.Q6_K.type_size
-		local half_type_size = type_size / 2
-		local rshift = bit.rshift
-		local band = bit.band
-		local lshift = bit.lshift
-		tensor_types.Q6_K = function(size, blob)
-			local byte_size = size * type_size
-			blob = ffi.cast("uint8_t*", blob or ffi.C.malloc(byte_size))
-			local blob_f16 = ffi.cast("uint16_t*", blob)
-			assert(byte_size % type_size == 0, "Total size must be a multiple of the block size")
-			byte_size = byte_size / type_size
-			local floats = ffi.typeof("float[256]") -- Increased to 256 for Q6_K block size
-			local f = floats()
-			return {
-				blob = blob,
-				size = tonumber(size),
-				byte_size = tonumber(byte_size),
-				byte_stride = 1,
-				blob_f16 = blob_f16,
-				half_type_size = half_type_size,
-				block_size = block_size,
-				half_block_size = half_block_size,
-				type_size = type_size,
-				GetFloat = function(_, index)
-					local block_index = rshift(index, 8) -- Divide by 256
-					local block_offset = block_index * type_size
-					local scale = f16_to_f32(blob_f16[block_index * 2])
-					local min = f16_to_f32(blob_f16[block_index * 2 + 1])
-					-- Calculate position within block
-					local modIndex = band(index, 255) -- index % 256
-					-- Q6_K uses 6 bits per value
-					-- Each byte contains 1.333 values (8/6 bits)
-					-- Need to handle bit extraction carefully
-					local byte_idx = rshift(modIndex * 6, 3) -- (modIndex * 6) / 8
-					local bit_shift = band(modIndex * 6, 7) -- (modIndex * 6) % 8
-					-- Extract 6 bits across byte boundary if needed
-					local val = band(rshift(blob[block_offset + 4 + byte_idx], bit_shift), 0x3F)
-
-					if bit_shift > 2 then
-						-- Need some bits from next byte
-						val = band(val + lshift(blob[block_offset + 5 + byte_idx], 8 - bit_shift), 0x3F)
-					end
-
-					-- Dequantize: val * scale + min
-					return val * scale + min
-				end,
-				MatrixVectorMultiplyWithOffset = function(a, b, out, dim0, dim1, offset)
-					local blob_f16 = a.blob_f16
-					local type_size = a.type_size
-					local block_size = a.block_size
-					local a = a.blob
-					local b = b.blob
-					local out = out.blob
-
-					for row = offset or 0, dim0 - 1 do
-						local result = 0
-						local block_index = (row * dim1) / block_size
-
-						for j = 0, (dim1 / block_size) - 1 do
-							local d = f16_to_f32(blob_f16[(block_index + j) * 2])
-							local block_offset = ((block_index + j) * type_size) + 2
-
-							-- Match C code layout: process 128 values at a time
-							for n = 0, 128 - 1, 128 do
-								for l = 0, 31 do
-									-- Get indices for ql, qh sections
-									local is = rshift(l, 4) -- l/16
-									-- First value: low 4 bits of ql[l] | 2 bits from qh[l] shifted
-									local q1 = band(a[block_offset + l], 0xF)
-									q1 = q1 + lshift(band(rshift(a[block_offset + 64 + l], 0), 3), 4)
-									q1 = q1 - 32
-									-- Second value: low 4 bits of ql[l+32] | 2 bits from qh[l] shifted
-									local q2 = band(a[block_offset + l + 32], 0xF)
-									q2 = q2 + lshift(band(rshift(a[block_offset + 64 + l], 2), 3), 4)
-									q2 = q2 - 32
-									-- Third value: high 4 bits of ql[l] | 2 bits from qh[l] shifted
-									local q3 = rshift(a[block_offset + l], 4)
-									q3 = q3 + lshift(band(rshift(a[block_offset + 64 + l], 4), 3), 4)
-									q3 = q3 - 32
-									-- Fourth value: high 4 bits of ql[l+32] | 2 bits from qh[l] shifted
-									local q4 = rshift(a[block_offset + l + 32], 4)
-									q4 = q4 + lshift(band(rshift(a[block_offset + 64 + l], 6), 3), 4)
-									q4 = q4 - 32
-									-- Accumulate results with correct indexing
-									local b_idx = j * block_size
-									result = result + d * q1 * b[b_idx + l]
-									result = result + d * q2 * b[b_idx + l + 32]
-									result = result + d * q3 * b[b_idx + l + 64]
-									result = result + d * q4 * b[b_idx + l + 96]
-								end
-							end
-						end
-
-						out[row] = result
-					end
-				end,
-			}
-		end
-	end
-
-	do
-		local block_size = 32 -- Standard block size
-		local type_size = block_size -- For Q8_0, type_size equals block_size since each value is 1 byte
-		local rshift = bit.rshift
-		local band = bit.band
-		tensor_types.Q8_0 = function(size, blob)
-			local byte_size = size
-			blob = ffi.cast("int8_t*", blob or ffi.C.malloc(byte_size))
-			assert(byte_size % block_size == 0, "Total size must be a multiple of the block size")
-			byte_size = byte_size / block_size
-			local floats = ffi.typeof("float[32]")
-			local f = floats()
-			return {
-				blob = blob,
-				size = tonumber(size),
-				byte_size = tonumber(byte_size),
-				byte_stride = 1,
-				-- Get a single float value at the given index
-				GetFloat = function(_, index)
-					-- Q8_0 values are direct 8-bit integers, no scaling needed
-					return tonumber(blob[index])
-				end,
-			}
-		end
-	end
 end
 
 function Tensor.New(typ, size, blob)
@@ -684,6 +502,46 @@ function Tensor.New(typ, size, blob)
 	t.type = typ
 	table.insert(Tensor.tensors_created, t)
 	return t
+end
+
+do
+	local ctype = ffi.typeof([[
+		struct {
+			int size;
+			int type;
+			void *blob; 
+		}
+	]])
+	local ctype_ptr = ffi.typeof("$*", ctype)
+	local ctype_box = ffi.typeof("$[1]", ctype)
+	local type_map = {}
+
+	do
+		local sorted = {}
+
+		for k, v in pairs(tensor_types) do
+			table.insert(sorted, k)
+		end
+
+		table.sort(sorted)
+
+		for i, v in pairs(sorted) do
+			type_map[v] = i
+			type_map[i] = v -- double lookup
+		end
+	end
+
+	function Tensor:ThreadSerialize()
+		return ctype(self.size, type_map[self.type], ffi.cast("void *", self.blob))
+	end
+
+	function Tensor:ThreadDeserialize(ptr)
+		local data = ffi.cast(ctype_ptr, ptr)
+
+		if not type_map[data.type] then error("unknown type " .. data.type) end
+
+		return Tensor.New(type_map[data.type], data.size, data.blob)
+	end
 end
 
 return Tensor
