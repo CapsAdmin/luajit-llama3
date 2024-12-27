@@ -6,12 +6,18 @@ local join_thread = function(id)
 	error("NYI")
 end
 
+local get_cpu_threads = function(id)
+	error("NYI")
+end
+
 if ffi.os == "Windows" then
 	ffi.cdef[[
+		typedef uint32_t (*thread_callback)(void*);
+
         void* CreateThread(
             void* lpThreadAttributes,
             size_t dwStackSize,
-            uint32_t (*)(void*) lpStartAddress,
+            thread_callback lpStartAddress,
             void* lpParameter,
             uint32_t dwCreationFlags,
             uint32_t* lpThreadId
@@ -20,6 +26,27 @@ if ffi.os == "Windows" then
         int CloseHandle(void* hObject);
         uint32_t GetLastError(void);
         int32_t GetExitCodeThread(void* hThread, uint32_t* lpExitCode);
+
+		typedef struct _SYSTEM_INFO {
+            union {
+                uint32_t dwOemId;
+                struct {
+                    uint16_t wProcessorArchitecture;
+                    uint16_t wReserved;
+                };
+            };
+            uint32_t dwPageSize;
+            void* lpMinimumApplicationAddress;
+            void* lpMaximumApplicationAddress;
+            size_t dwActiveProcessorMask;
+            uint32_t dwNumberOfProcessors;
+            uint32_t dwProcessorType;
+            uint32_t dwAllocationGranularity;
+            uint16_t wProcessorLevel;
+            uint16_t wProcessorRevision;
+        } SYSTEM_INFO;
+
+        void GetSystemInfo(SYSTEM_INFO* lpSystemInfo);
     ]]
 	local kernel32 = ffi.load("kernel32")
 
@@ -47,7 +74,7 @@ if ffi.os == "Windows" then
 		local thread_handle = kernel32.CreateThread(
 			nil, -- Security attributes (default)
 			0, -- Stack size (default)
-			ffi.cast("uint32_t (*)(void*)", func_ptr),
+			ffi.cast("thread_callback", func_ptr),
 			udata, -- Thread parameter
 			0, -- Creation flags (run immediately)
 			thread_id -- Thread identifier
@@ -74,6 +101,12 @@ if ffi.os == "Windows" then
 
 		return exit_code[0]
 	end
+
+	function get_cpu_threads()
+        local sysinfo = ffi.new("SYSTEM_INFO")
+        kernel32.GetSystemInfo(sysinfo)
+        return tonumber(sysinfo.dwNumberOfProcessors)
+    end
 else
 	ffi.cdef[[
 		typedef uint64_t pthread_t;
@@ -122,6 +155,12 @@ else
 	function join_thread(id)
 		check_pthread(pt.pthread_join(id, nil))
 	end
+
+	function get_cpu_threads()
+		if ffi.os == "OSX" then return tonumber(ffi.C.sysconf(58)) end
+	
+		return tonumber(ffi.C.sysconf(83))
+	end
 end
 
 local LUA_GLOBALSINDEX = -10002
@@ -141,11 +180,6 @@ ffi.cdef[[
     void lua_pushstring(lua_State *L, const char *s);
 ]]
 
-local function get_cpu_threads()
-	if ffi.os == "OSX" then return tonumber(ffi.C.sysconf(58)) end
-
-	return tonumber(ffi.C.sysconf(83))
-end
 
 local function create_lua_state()
 	local L = ffi.C.luaL_newstate()

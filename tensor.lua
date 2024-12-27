@@ -85,7 +85,7 @@ do
 
 			self:MatrixVectorMultiplyWithOffsetGPU(that, out, dim0, dim1, offset)
 		elseif self.backend == "cpu_threads" then
-			if not has_cpu_threads then error("cpu threads not available") end
+			if not has_cpu_threads then error("cpu threads not available" .. pthreads) end
 
 			self:MatrixVectorMultiplyWithOffsetCPUThreads(that, out, dim0, dim1, offset)
 		end
